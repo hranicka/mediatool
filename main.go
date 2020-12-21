@@ -9,19 +9,21 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 )
 
 const (
-	typeAudio = "audio"
-	codecDTS  = "dts"
-	codecAC3  = "ac3"
+	typeAudio  = "audio"
+	codecDTS   = "dts"
+	codecAC3   = "ac3"
+	minBitRate = 480000
 )
 
 var (
-	commentaryRegExp = regexp.MustCompile(`(?i)(?:comment|director)`)
-	filePattern      = regexp.MustCompile(`(?i)\.mkv$`)
-	dryRun           = false
-	verbose          = false
+	commentRegExp = regexp.MustCompile(`(?i)(?:comment|director)`)
+	filePattern   = regexp.MustCompile(`(?i)\.mkv$`)
+	dryRun        = false
+	verbose       = false
 )
 
 type tags struct {
@@ -122,7 +124,7 @@ func process(src string) error {
 	for lang, bs := range bad {
 		if vs, ok := valid[lang]; ok {
 			// exclude commentary and low bitrate tracks
-			if commentaryRegExp.MatchString(vs.Tags.Title) || vs.BitRate != "640000" {
+			if commentRegExp.MatchString(vs.Tags.Title) || parseInt(vs.BitRate) < minBitRate {
 				logInfo("> %s: skipping low bitrate or commentary track", lang)
 			} else {
 				logInfo("> %s: already converted stream found", lang)
@@ -159,6 +161,11 @@ func process(src string) error {
 
 	logInfo("file finished\n")
 	return nil
+}
+
+func parseInt(s string) int {
+	i, _ := strconv.Atoi(s)
+	return i
 }
 
 func probe(src string) (*ffprobe, error) {
