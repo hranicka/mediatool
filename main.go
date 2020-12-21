@@ -37,8 +37,12 @@ type ffprobe struct {
 	Streams []stream `json:"streams"`
 }
 
-func log(format string, a ...interface{}) {
+func logDebug(format string, a ...interface{}) {
 	fmt.Printf(format+"\n", a...)
+}
+
+func logError(format string, a ...interface{}) {
+	fmt.Printf("err: "+format+"\n", a...)
 }
 
 func main() {
@@ -49,20 +53,27 @@ func main() {
 	flag.BoolVar(&dryRun, "dry", false, "run in dry mode = without actual conversion")
 	flag.Parse()
 
+	// validate
 	if src == "" {
 		flag.PrintDefaults()
 		return
 	}
-	if dryRun {
-		log("DRY RUN")
-	}
 
+	// run
+	if dryRun {
+		logDebug("DRY RUN")
+	}
+	if err := process(src, dryRun); err != nil {
+		logError("could not process %s: %v", src, err)
+	}
+}
+
+func process(src string, dryRun bool) error {
 	// read file streams
-	log("opening file %s", src)
+	logDebug("opening file %s", src)
 	f, err := probe(src)
 	if err != nil {
-		log("cannot get file info: %v", err)
-		return
+		return fmt.Errorf("cannot get file info: %v", err)
 	}
 
 	valid := make(map[string]stream)
@@ -85,43 +96,41 @@ func main() {
 		if vs, ok := valid[lang]; ok {
 			// exclude commentary and low bitrate tracks
 			if commentaryRegExp.MatchString(vs.Tags.Title) || vs.BitRate != "640000" {
-				log("> %s: skipping low bitrate or commentary track", lang)
+				logDebug("> %s: skipping low bitrate or commentary track", lang)
 			} else {
-				log("> %s: already converted stream found", lang)
+				logDebug("> %s: already converted stream found", lang)
 				continue
 			}
 		}
 
 		toConvert = append(toConvert, bs)
-		log("> %s: stream for conversion found", lang)
+		logDebug("> %s: stream for conversion found", lang)
 	}
 
 	// convert if needed
 	if len(toConvert) == 0 {
-		log("no conversion needed")
+		logDebug("no conversion needed")
 	} else {
-		log("converting %d DTS track(s)", len(toConvert))
+		logDebug("converting %d DTS track(s)", len(toConvert))
 
 		if !dryRun {
 			dst := src
 			src += ".old"
 			if err := os.Rename(dst, src); err != nil {
-				log("cannot rename original file: %v", err)
-				return
+				return fmt.Errorf("cannot rename original file: %v", err)
 			}
 
 			if err := convert(src, dst, toConvert); err != nil {
-				log("cannot convert file: %v: %s", err)
 				if err := os.Rename(src, dst); err != nil {
-					log("cannot rename original file back: %v", err)
+					logError("cannot rename original file back: %v", err)
 				}
-				return
+				return fmt.Errorf("cannot convert file: %v", err)
 			}
 		}
 	}
 
-	log("file finished\n")
-	return
+	logDebug("file finished\n")
+	return nil
 }
 
 func probe(src string) (*ffprobe, error) {
