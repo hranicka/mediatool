@@ -20,6 +20,8 @@ const (
 var (
 	commentaryRegExp = regexp.MustCompile(`(?i)(?:comment|director)`)
 	filePattern      = regexp.MustCompile(`(?i)\.mkv$`)
+	dryRun           = false
+	verbose          = false
 )
 
 type tags struct {
@@ -40,6 +42,12 @@ type ffprobe struct {
 }
 
 func logDebug(format string, a ...interface{}) {
+	if verbose {
+		fmt.Printf("debug: "+format+"\n", a...)
+	}
+}
+
+func logInfo(format string, a ...interface{}) {
 	fmt.Printf(format+"\n", a...)
 }
 
@@ -51,10 +59,10 @@ func main() {
 	// parse cli args
 	var file string
 	var dir string
-	var dryRun bool
 	flag.StringVar(&file, "file", "", "source file path, cannot be combined with -dir")
 	flag.StringVar(&dir, "dir", "", "source files directory, cannot be combined with -file")
 	flag.BoolVar(&dryRun, "dry", false, "run in dry mode = without actual conversion")
+	flag.BoolVar(&verbose, "v", false, "verbose/debug output")
 	flag.Parse()
 
 	// validate
@@ -65,11 +73,11 @@ func main() {
 
 	// run
 	if dryRun {
-		logDebug("DRY RUN")
+		logInfo("DRY RUN")
 	}
 
 	if file != "" {
-		if err := process(file, dryRun); err != nil {
+		if err := process(file); err != nil {
 			logError("could not process %s: %v", file, err)
 		}
 	}
@@ -79,7 +87,7 @@ func main() {
 			if !filePattern.MatchString(path) {
 				return nil
 			}
-			if err := process(path, dryRun); err != nil {
+			if err := process(path); err != nil {
 				logError("could not process %s: %v", file, err)
 			}
 			return nil
@@ -87,9 +95,9 @@ func main() {
 	}
 }
 
-func process(src string, dryRun bool) error {
+func process(src string) error {
 	// read file streams
-	logDebug("opening file %s", src)
+	logInfo("opening file %s", src)
 	f, err := probe(src)
 	if err != nil {
 		return fmt.Errorf("cannot get file info: %v", err)
@@ -115,22 +123,23 @@ func process(src string, dryRun bool) error {
 		if vs, ok := valid[lang]; ok {
 			// exclude commentary and low bitrate tracks
 			if commentaryRegExp.MatchString(vs.Tags.Title) || vs.BitRate != "640000" {
-				logDebug("> %s: skipping low bitrate or commentary track", lang)
+				logInfo("> %s: skipping low bitrate or commentary track", lang)
 			} else {
-				logDebug("> %s: already converted stream found", lang)
+				logInfo("> %s: already converted stream found", lang)
 				continue
 			}
 		}
 
 		toConvert = append(toConvert, bs)
-		logDebug("> %s: stream for conversion found", lang)
+		logInfo("> %s: stream for conversion found", lang)
 	}
 
 	// convert if needed
 	if len(toConvert) == 0 {
-		logDebug("no conversion needed")
+		logInfo("no conversion needed")
 	} else {
-		logDebug("converting %d DTS track(s)", len(toConvert))
+		logInfo("converting %d DTS track(s)", len(toConvert))
+		logDebug("%+v", toConvert)
 
 		if !dryRun {
 			dst := src
@@ -148,7 +157,7 @@ func process(src string, dryRun bool) error {
 		}
 	}
 
-	logDebug("file finished\n")
+	logInfo("file finished\n")
 	return nil
 }
 
@@ -157,6 +166,7 @@ func probe(src string) (*ffprobe, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cannot open file: %v", err)
 	}
+	logDebug(string(out))
 
 	f := &ffprobe{}
 	if err := json.Unmarshal(out, f); err != nil {
@@ -188,6 +198,7 @@ func runCmd(name string, arg ...string) ([]byte, error) {
 	cmd.Stdout = &cmdOut
 	cmd.Stderr = &cmdErr
 
+	logDebug(cmd.String())
 	if err := cmd.Run(); err != nil {
 		return nil, fmt.Errorf("%v: %s", err, cmdErr.String())
 	}
