@@ -1,23 +1,39 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
-
-	"github.com/pixelbender/go-matroska/matroska"
+	"os/exec"
+	"regexp"
 )
 
 const (
-	typeAudio = 2
-	codecDTS  = "A_DTS"
-	codecAC3  = "A_AC3"
+	typeAudio = "audio"
+	codecDTS  = "dts"
+	codecAC3  = "ac3"
 )
 
-type Track struct {
-	Type  int
-	Lang  string
-	Codec string
-	Name  string
+var (
+	commentaryRegExp = regexp.MustCompile(`(?i)(?:comment|director)`)
+)
+
+type tags struct {
+	Language string `json:"language"`
+	Title    string `json:"title"`
+}
+
+type stream struct {
+	Index     int    `json:"index"`
+	CodecName string `json:"codec_name"`
+	CodecType string `json:"codec_type"`
+	BitRate   string `json:"bit_rate"`
+	Tags      tags   `json:"tags"`
+}
+
+type ffprobe struct {
+	Streams []stream `json:"streams"`
 }
 
 func log(format string, a ...interface{}) {
@@ -28,48 +44,58 @@ func main() {
 	path := os.Args[1]
 	log("opening file %s", path)
 
-	doc, err := matroska.Decode(path)
-	if err != nil {
-		log("cannot open file %s: %w", path, err)
+	var cmdOut bytes.Buffer
+	var cmdErr bytes.Buffer
+	cmd := exec.Command("ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", path)
+	cmd.Stdout = &cmdOut
+	cmd.Stderr = &cmdErr
+
+	if err := cmd.Run(); err != nil {
+		log("cannot open file %v: %s", err, cmdErr.String())
 		return
 	}
 
-	ac3Tracks := make(map[string]*Track)
-	dtsTracks := make(map[string]*Track)
-	for _, t := range doc.Segment.Tracks {
-		for _, te := range t.Entries {
-			track := &Track{
-				Type:  int(te.Type),
-				Codec: te.CodecID,
-				Lang:  te.Language,
-				Name:  te.Name,
-			}
-
-			if track.Type != typeAudio {
-				continue
-			}
-
-			switch track.Codec {
-			case codecAC3:
-				ac3Tracks[track.Lang] = track
-			case codecDTS:
-				dtsTracks[track.Lang] = track
-			}
-		}
+	f := &ffprobe{}
+	if err := json.Unmarshal(cmdOut.Bytes(), f); err != nil {
+		log("cannot parse %s output: %v", "ffprobe", err)
+		return
 	}
 
-	var dtsToConvert []*Track
-	for lang, dts := range dtsTracks {
-		if _, ok := ac3Tracks[lang]; ok {
-			log("> %s DTS and AC3 tracks found", lang)
+	ac3Streams := make(map[string]stream)
+	dtsStreams := make(map[string]stream)
+	for _, s := range f.Streams {
+		if s.CodecType != typeAudio {
 			continue
 		}
 
-		dtsToConvert = append(dtsToConvert, dts)
-		log("> %s DTS without AC3 found", lang)
+		switch s.CodecName {
+		case codecAC3:
+			ac3Streams[s.Tags.Language] = s
+		case codecDTS:
+			dtsStreams[s.Tags.Language] = s
+		}
 	}
+
+	var dtsToConvert []stream
+	for lang, dts := range dtsStreams {
+		if ac3, ok := ac3Streams[lang]; ok {
+			// exclude commentary and low bitrate tracks
+			if commentaryRegExp.MatchString(ac3.Tags.Title) || ac3.BitRate != "640000" {
+				log("> %s skipping low bitrate or commentary AC3 track", lang)
+			} else {
+				log("> %s DTS and AC3 streams found", lang)
+				continue
+			}
+		}
+
+		dtsToConvert = append(dtsToConvert, dts)
+		log("> %s DTS without AC3 stream found", lang)
+	}
+
 	if len(dtsToConvert) == 0 {
 		log("no conversion needed")
 	}
-	log("file finished\n")
+
+	log("file finished")
+	return
 }
