@@ -21,8 +21,9 @@ const (
 var (
 	commentRegExp = regexp.MustCompile(`(?i)(?:comment|director)`)
 	filePattern   = regexp.MustCompile(`(?i)\.mkv$`)
-	dryRun        = false
-	verbose       = false
+
+	dryRun  = false
+	verbose = false
 )
 
 type tags struct {
@@ -68,8 +69,10 @@ func main() {
 
 	var minBitRate int
 	var minFileSize int64
+	var lang string
 	flag.IntVar(&minBitRate, "minbr", 480000, "minimal bitrate of track to be considered as valid/already converted")
 	flag.Int64Var(&minFileSize, "minfs", 0, "minimal file size to be processed (only with -dir)")
+	flag.StringVar(&lang, "lang", "", "language of track to be processed; leave empty for all languages")
 
 	flag.Parse()
 
@@ -85,7 +88,7 @@ func main() {
 	}
 
 	if file != "" {
-		if err := process(file, minBitRate); err != nil {
+		if err := process(file, minBitRate, lang); err != nil {
 			logError("could not process %s: %v", file, err)
 		}
 	}
@@ -103,7 +106,7 @@ func main() {
 				return nil
 			}
 
-			if err := process(path, minBitRate); err != nil {
+			if err := process(path, minBitRate, lang); err != nil {
 				logError("could not process %s: %v", file, err)
 			}
 			return nil
@@ -111,7 +114,7 @@ func main() {
 	}
 }
 
-func process(src string, minBitRate int) error {
+func process(src string, minBitRate int, lang string) error {
 	// read file streams
 	logInfo("opening file %s", src)
 	f, err := probe(src)
@@ -135,19 +138,24 @@ func process(src string, minBitRate int) error {
 	}
 
 	var toConvert []stream
-	for lang, bs := range bad {
-		if vs, ok := valid[lang]; ok {
+	for l, bs := range bad {
+		if lang != "" && l != lang {
+			logInfo("> %s: not required language, skipping", l)
+			continue
+		}
+
+		if vs, ok := valid[l]; ok {
 			// exclude commentary and low bitrate tracks
 			if commentRegExp.MatchString(vs.Tags.Title) || parseInt(vs.BitRate) < minBitRate {
-				logInfo("> %s: skipping low bitrate or commentary track", lang)
+				logInfo("> %s: low bitrate or commentary stream, skipping", l)
 			} else {
-				logInfo("> %s: already converted stream found", lang)
+				logInfo("> %s: already converted stream, skipping", l)
 				continue
 			}
 		}
 
 		toConvert = append(toConvert, bs)
-		logInfo("> %s: stream for conversion found", lang)
+		logInfo("> %s: stream for conversion found", l)
 	}
 
 	// convert if needed
