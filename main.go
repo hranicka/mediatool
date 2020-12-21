@@ -166,6 +166,10 @@ func process(src string) error {
 				}
 				return fmt.Errorf("cannot convert file: %v", err)
 			}
+
+			if err := os.Rename(src, dst+".del"); err != nil {
+				return fmt.Errorf("cannot rename old file: %v", err)
+			}
 		}
 	}
 
