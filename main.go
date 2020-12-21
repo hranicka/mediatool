@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 )
 
@@ -18,6 +19,7 @@ const (
 
 var (
 	commentaryRegExp = regexp.MustCompile(`(?i)(?:comment|director)`)
+	filePattern      = regexp.MustCompile(`(?i)\.mkv$`)
 )
 
 type tags struct {
@@ -47,14 +49,16 @@ func logError(format string, a ...interface{}) {
 
 func main() {
 	// parse cli args
-	var src string
+	var file string
+	var dir string
 	var dryRun bool
-	flag.StringVar(&src, "file", "", "source file path")
+	flag.StringVar(&file, "file", "", "source file path, cannot be combined with -dir")
+	flag.StringVar(&dir, "dir", "", "source files directory, cannot be combined with -file")
 	flag.BoolVar(&dryRun, "dry", false, "run in dry mode = without actual conversion")
 	flag.Parse()
 
 	// validate
-	if src == "" {
+	if (file == "" && dir == "") || (file != "" && dir != "") {
 		flag.PrintDefaults()
 		return
 	}
@@ -63,8 +67,23 @@ func main() {
 	if dryRun {
 		logDebug("DRY RUN")
 	}
-	if err := process(src, dryRun); err != nil {
-		logError("could not process %s: %v", src, err)
+
+	if file != "" {
+		if err := process(file, dryRun); err != nil {
+			logError("could not process %s: %v", file, err)
+		}
+	}
+
+	if dir != "" {
+		_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+			if !filePattern.MatchString(path) {
+				return nil
+			}
+			if err := process(path, dryRun); err != nil {
+				logError("could not process %s: %v", file, err)
+			}
+			return nil
+		})
 	}
 }
 
