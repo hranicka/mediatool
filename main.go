@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"os"
 	"os/exec"
@@ -41,34 +42,31 @@ func log(format string, a ...interface{}) {
 }
 
 func main() {
-	path := os.Args[1]
-	log("opening file %s", path)
+	// parse cli args
+	var src string
+	var dryRun bool
+	flag.StringVar(&src, "file", "", "source file path")
+	flag.BoolVar(&dryRun, "dry", false, "run in dry mode = without actual conversion")
+	flag.Parse()
 
-	srcPath := path + ".old"
-	if err := os.Rename(path, srcPath); err != nil {
-		log("cannot move file %v", err)
+	if src == "" {
+		flag.PrintDefaults()
+		return
+	}
+	if dryRun {
+		log("DRY RUN")
+	}
+
+	// read file streams
+	log("opening file %s", src)
+	f, err := probe(src)
+	if err != nil {
+		log("cannot get file info: %v", err)
 		return
 	}
 
-	var cmdOut bytes.Buffer
-	var cmdErr bytes.Buffer
-	cmd := exec.Command("ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", srcPath)
-	cmd.Stdout = &cmdOut
-	cmd.Stderr = &cmdErr
-
-	if err := cmd.Run(); err != nil {
-		log("cannot open file %v: %s", err, cmdErr.String())
-		return
-	}
-
-	f := &ffprobe{}
-	if err := json.Unmarshal(cmdOut.Bytes(), f); err != nil {
-		log("cannot parse %s output: %v", "ffprobe", err)
-		return
-	}
-
-	ac3Streams := make(map[string]stream)
-	dtsStreams := make(map[string]stream)
+	valid := make(map[string]stream)
+	bad := make(map[string]stream)
 	for _, s := range f.Streams {
 		if s.CodecType != typeAudio {
 			continue
@@ -76,55 +74,94 @@ func main() {
 
 		switch s.CodecName {
 		case codecAC3:
-			ac3Streams[s.Tags.Language] = s
+			valid[s.Tags.Language] = s
 		case codecDTS:
-			dtsStreams[s.Tags.Language] = s
+			bad[s.Tags.Language] = s
 		}
 	}
 
-	var dtsToConvert []stream
-	for lang, dts := range dtsStreams {
-		if ac3, ok := ac3Streams[lang]; ok {
+	var toConvert []stream
+	for lang, bs := range bad {
+		if vs, ok := valid[lang]; ok {
 			// exclude commentary and low bitrate tracks
-			if commentaryRegExp.MatchString(ac3.Tags.Title) || ac3.BitRate != "640000" {
-				log("> %s skipping low bitrate or commentary AC3 track", lang)
+			if commentaryRegExp.MatchString(vs.Tags.Title) || vs.BitRate != "640000" {
+				log("> %s: skipping low bitrate or commentary track", lang)
 			} else {
-				log("> %s DTS and AC3 streams found", lang)
+				log("> %s: already converted stream found", lang)
 				continue
 			}
 		}
 
-		dtsToConvert = append(dtsToConvert, dts)
-		log("> %s DTS without AC3 stream found", lang)
+		toConvert = append(toConvert, bs)
+		log("> %s: stream for conversion found", lang)
 	}
 
-	if len(dtsToConvert) == 0 {
+	// convert if needed
+	if len(toConvert) == 0 {
 		log("no conversion needed")
 	} else {
-		log("converting %d DTS track(s)", len(dtsToConvert))
+		log("converting %d DTS track(s)", len(toConvert))
 
-		args := []string{"-i", srcPath, "-map", "0:v"}
-		for _, dts := range dtsToConvert {
-			args = append(args, "-map", fmt.Sprintf("0:%d", dts.Index))
-		}
-		args = append(args, "-map", "0:a", "-map", "0:s", "-c:v", "copy", "-c:a", "copy", "-c:s", "copy")
-		for _, dts := range dtsToConvert {
-			args = append(args, fmt.Sprintf("-c:%d", dts.Index), "ac3", fmt.Sprintf("-b:%d", dts.Index), "640k")
-		}
-		args = append(args, path)
+		if !dryRun {
+			dst := src
+			src += ".old"
+			if err := os.Rename(dst, src); err != nil {
+				log("cannot rename original file: %v", err)
+				return
+			}
 
-		var cmdOut bytes.Buffer
-		cmd.Stderr = &cmdErr
-		cmd := exec.Command("ffmpeg", args...)
-		cmd.Stdout = &cmdOut
-		cmd.Stderr = &cmdErr
-
-		if err := cmd.Run(); err != nil {
-			log("cannot convert file %v: %s", err, cmdErr.String())
-			return
+			if err := convert(src, dst, toConvert); err != nil {
+				log("cannot convert file: %v: %s", err)
+				if err := os.Rename(src, dst); err != nil {
+					log("cannot rename original file back: %v", err)
+				}
+				return
+			}
 		}
 	}
 
-	log("file finished")
+	log("file finished\n")
 	return
+}
+
+func probe(src string) (*ffprobe, error) {
+	out, err := runCmd("ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", src)
+	if err != nil {
+		return nil, fmt.Errorf("cannot open file: %v", err)
+	}
+
+	f := &ffprobe{}
+	if err := json.Unmarshal(out, f); err != nil {
+		return nil, fmt.Errorf("cannot parse %s output: %v", "ffprobe", err)
+	}
+
+	return f, nil
+}
+
+func convert(src string, dst string, streams []stream) error {
+	args := []string{"-i", src, "-map", "0:v"}
+	for _, s := range streams {
+		args = append(args, "-map", fmt.Sprintf("0:%d", s.Index))
+	}
+	args = append(args, "-map", "0:a", "-map", "0:s", "-c:v", "copy", "-c:a", "copy", "-c:s", "copy")
+	for _, s := range streams {
+		args = append(args, fmt.Sprintf("-c:%d", s.Index), "ac3", fmt.Sprintf("-b:%d", s.Index), "640k")
+	}
+	args = append(args, dst)
+
+	_, err := runCmd("ffmpeg", args...)
+	return err
+}
+
+func runCmd(name string, arg ...string) ([]byte, error) {
+	var cmdOut bytes.Buffer
+	var cmdErr bytes.Buffer
+	cmd := exec.Command(name, arg...)
+	cmd.Stdout = &cmdOut
+	cmd.Stderr = &cmdErr
+
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("%v: %s", err, cmdErr.String())
+	}
+	return cmdOut.Bytes(), nil
 }
