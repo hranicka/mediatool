@@ -13,10 +13,12 @@ import (
 )
 
 const (
-	typeAudio  = "audio"
-	codecDTS   = "dts"
-	codecAC3   = "ac3"
-	minBitRate = 480000
+	typeAudio = "audio"
+	codecDTS  = "dts"
+	codecAC3  = "ac3"
+
+	minBitRate  = 480000
+	minFileSize = 20 * 1024 * 1024 * 1024
 )
 
 var (
@@ -87,8 +89,16 @@ func main() {
 	if dir != "" {
 		_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 			if !filePattern.MatchString(path) {
+				logDebug("skipping unmatched file name %s", path)
 				return nil
 			}
+
+			// TODO Bitrate would be much more suitable than file size
+			if info.Size() < minFileSize {
+				logDebug("skipping small file %s", path)
+				return nil
+			}
+
 			if err := process(path); err != nil {
 				logError("could not process %s: %v", file, err)
 			}
