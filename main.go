@@ -44,9 +44,15 @@ func main() {
 	path := os.Args[1]
 	log("opening file %s", path)
 
+	srcPath := path + ".old"
+	if err := os.Rename(path, srcPath); err != nil {
+		log("cannot move file %v", err)
+		return
+	}
+
 	var cmdOut bytes.Buffer
 	var cmdErr bytes.Buffer
-	cmd := exec.Command("ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", path)
+	cmd := exec.Command("ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", srcPath)
 	cmd.Stdout = &cmdOut
 	cmd.Stderr = &cmdErr
 
@@ -94,6 +100,29 @@ func main() {
 
 	if len(dtsToConvert) == 0 {
 		log("no conversion needed")
+	} else {
+		log("converting %d DTS track(s)", len(dtsToConvert))
+
+		args := []string{"-i", srcPath, "-map", "0:v"}
+		for _, dts := range dtsToConvert {
+			args = append(args, "-map", fmt.Sprintf("0:%d", dts.Index))
+		}
+		args = append(args, "-map", "0:a", "-map", "0:s", "-c:v", "copy", "-c:a", "copy", "-c:s", "copy")
+		for _, dts := range dtsToConvert {
+			args = append(args, fmt.Sprintf("-c:%d", dts.Index), "ac3", fmt.Sprintf("-b:%d", dts.Index), "640k")
+		}
+		args = append(args, path)
+
+		var cmdOut bytes.Buffer
+		cmd.Stderr = &cmdErr
+		cmd := exec.Command("ffmpeg", args...)
+		cmd.Stdout = &cmdOut
+		cmd.Stderr = &cmdErr
+
+		if err := cmd.Run(); err != nil {
+			log("cannot convert file %v: %s", err, cmdErr.String())
+			return
+		}
 	}
 
 	log("file finished")
