@@ -154,21 +154,20 @@ func process(src string) error {
 		logDebug("%+v", toConvert)
 
 		if !dryRun {
-			dst := src
-			src += ".old"
-			if err := os.Rename(dst, src); err != nil {
-				return fmt.Errorf("cannot rename original file: %v", err)
-			}
-
+			dst := src + ".tmp"
 			if err := convert(src, dst, toConvert); err != nil {
-				if err := os.Rename(src, dst); err != nil {
-					logError("cannot rename original file back: %v", err)
+				if err := os.Remove(dst); err != nil {
+					logError("cannot delete temporary file: %v", err)
 				}
 				return fmt.Errorf("cannot convert file: %v", err)
 			}
 
-			if err := os.Rename(src, dst+".del"); err != nil {
-				return fmt.Errorf("cannot rename old file: %v", err)
+			old := src + ".old"
+			if err := os.Rename(src, old); err != nil {
+				return fmt.Errorf("cannot rename original file: %v", err)
+			}
+			if err := os.Rename(dst, src); err != nil {
+				return fmt.Errorf("cannot rename converted file: %v", err)
 			}
 		}
 	}
