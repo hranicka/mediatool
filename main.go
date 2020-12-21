@@ -16,9 +16,6 @@ const (
 	typeAudio = "audio"
 	codecDTS  = "dts"
 	codecAC3  = "ac3"
-
-	minBitRate  = 480000
-	minFileSize = 20 * 1024 * 1024 * 1024
 )
 
 var (
@@ -61,12 +58,19 @@ func logError(format string, a ...interface{}) {
 
 func main() {
 	// parse cli args
-	var file string
-	var dir string
-	flag.StringVar(&file, "file", "", "source file path, cannot be combined with -dir")
-	flag.StringVar(&dir, "dir", "", "source files directory, cannot be combined with -file")
 	flag.BoolVar(&dryRun, "dry", false, "run in dry mode = without actual conversion")
 	flag.BoolVar(&verbose, "v", false, "verbose/debug output")
+
+	var file string
+	var dir string
+	flag.StringVar(&file, "file", "", "source file path (cannot be combined with -dir)")
+	flag.StringVar(&dir, "dir", "", "source files directory (cannot be combined with -file)")
+
+	var minBitRate int
+	var minFileSize int64
+	flag.IntVar(&minBitRate, "minbr", 480000, "minimal bitrate of track to be considered as valid/already converted")
+	flag.Int64Var(&minFileSize, "minfs", 0, "minimal file size to be processed (only with -dir)")
+
 	flag.Parse()
 
 	// validate
@@ -81,7 +85,7 @@ func main() {
 	}
 
 	if file != "" {
-		if err := process(file); err != nil {
+		if err := process(file, minBitRate); err != nil {
 			logError("could not process %s: %v", file, err)
 		}
 	}
@@ -99,7 +103,7 @@ func main() {
 				return nil
 			}
 
-			if err := process(path); err != nil {
+			if err := process(path, minBitRate); err != nil {
 				logError("could not process %s: %v", file, err)
 			}
 			return nil
@@ -107,7 +111,7 @@ func main() {
 	}
 }
 
-func process(src string) error {
+func process(src string, minBitRate int) error {
 	// read file streams
 	logInfo("opening file %s", src)
 	f, err := probe(src)
