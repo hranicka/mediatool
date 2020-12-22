@@ -37,6 +37,7 @@ type stream struct {
 	CodecType string `json:"codec_type"`
 	BitRate   string `json:"bit_rate"`
 	Tags      tags   `json:"tags"`
+	TypeIndex int
 }
 
 type ffprobe struct {
@@ -122,6 +123,18 @@ func process(src string, minBitRate int, lang string) error {
 		return fmt.Errorf("cannot get file info: %v", err)
 	}
 
+	// add type-specific stream counters
+	cnt := make(map[string]int)
+	for i, s := range f.Streams {
+		if _, ok := cnt[s.CodecType]; ok {
+			cnt[s.CodecType]++
+		} else {
+			cnt[s.CodecType] = 0
+		}
+		f.Streams[i].TypeIndex = cnt[s.CodecType]
+	}
+
+	// detect streams for conversion
 	valid := make(map[string]stream)
 	bad := make(map[string]stream)
 	for _, s := range f.Streams {
@@ -206,13 +219,15 @@ func probe(src string) (*ffprobe, error) {
 }
 
 func convert(src string, dst string, streams []stream) error {
-	args := []string{"-i", src, "-map", "0:v"}
+	// TODO Assumes all streams are audio
+
+	args := []string{"-i", src, "-map", "0:v", "-map", "0:a"}
 	for _, s := range streams {
-		args = append(args, "-map", fmt.Sprintf("0:%d", s.Index))
+		args = append(args, "-map", fmt.Sprintf("0:a:%d", s.TypeIndex))
 	}
-	args = append(args, "-map", "0:a", "-map", "0:s", "-c:v", "copy", "-c:a", "copy", "-c:s", "copy")
+	args = append(args, "-map", "0:s", "-c", "copy")
 	for _, s := range streams {
-		args = append(args, fmt.Sprintf("-c:%d", s.Index), "ac3", fmt.Sprintf("-b:%d", s.Index), "640k")
+		args = append(args, fmt.Sprintf("-c:a:%d", s.TypeIndex), "ac3", fmt.Sprintf("-b:a:%d", s.TypeIndex), "640k")
 	}
 	args = append(args, "-max_muxing_queue_size", "8096", dst)
 
