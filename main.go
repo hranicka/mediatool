@@ -73,7 +73,7 @@ func main() {
 	var lang string
 	flag.IntVar(&minBitRate, "minbr", 480000, "minimal bitrate of track to be considered as valid/already converted")
 	flag.Int64Var(&minFileSize, "minfs", 0, "minimal file size to be processed (only with -dir)")
-	flag.StringVar(&lang, "lang", "", "language of track to be processed; leave empty for all languages")
+	flag.StringVar(&lang, "lang", "", "yet not converted language to trigger conversion of the whole file")
 
 	flag.Parse()
 
@@ -151,10 +151,10 @@ func process(src string, minBitRate int, lang string) error {
 	}
 
 	var toConvert []stream
+	var hasLang bool
 	for l, bs := range bad {
-		if lang != "" && l != lang {
-			logInfo("> %s: not required language, skipping", l)
-			continue
+		if lang == "" || l == lang {
+			hasLang = true
 		}
 
 		if vs, ok := valid[l]; ok {
@@ -173,7 +173,9 @@ func process(src string, minBitRate int, lang string) error {
 
 	// convert if needed
 	if len(toConvert) == 0 {
-		logInfo("no conversion needed")
+		logInfo("no conversion needed, nothing to convert")
+	} else if !hasLang {
+		logInfo("no conversion needed, does not contain language %s", lang)
 	} else {
 		logInfo("converting %d DTS track(s)", len(toConvert))
 		logDebug("%+v", toConvert)
