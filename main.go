@@ -168,9 +168,6 @@ func process(src string, minBitRate int, lang string) error {
 		if !dryRun {
 			dst := src + ".tmp.mkv" // TODO Validate original extension
 			if err := convert(src, dst, toConvert); err != nil {
-				if err := os.Remove(dst); err != nil {
-					logError("cannot delete temporary file: %v", err)
-				}
 				return fmt.Errorf("cannot convert file: %v", err)
 			}
 
