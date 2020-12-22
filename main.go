@@ -226,7 +226,7 @@ func convert(src string, dst string, streams []stream) error {
 	for _, s := range streams {
 		args = append(args, "-map", fmt.Sprintf("0:a:%d", s.TypeIndex))
 	}
-	args = append(args, "-map", "0:s", "-c", "copy")
+	args = append(args, "-map", "0:s?", "-c", "copy")
 	for _, s := range streams {
 		args = append(args, fmt.Sprintf("-c:a:%d", s.TypeIndex), "ac3", fmt.Sprintf("-b:a:%d", s.TypeIndex), "640k")
 	}
