@@ -18,6 +18,9 @@ const (
 	codecAC3  = "ac3"
 )
 
+// Version generated during build process.
+var version string
+
 var (
 	commentRegExp = regexp.MustCompile(`(?i)(?:comment|director)`)
 	filePattern   = regexp.MustCompile(`(?i)\.mkv$`)
@@ -60,6 +63,7 @@ func logError(format string, a ...interface{}) {
 
 func main() {
 	// parse cli args
+	v := flag.Bool("version", false, "prints application version")
 	flag.BoolVar(&dryRun, "dry", false, "run in dry mode = without actual conversion")
 	flag.BoolVar(&verbose, "v", false, "verbose/debug output")
 
@@ -76,6 +80,12 @@ func main() {
 	flag.StringVar(&lang, "lang", "", "yet not converted language to trigger conversion of the whole file")
 
 	flag.Parse()
+
+	// Print version
+	if *v {
+		fmt.Println(version)
+		return
+	}
 
 	// validate
 	if (file == "" && dir == "") || (file != "" && dir != "") {
