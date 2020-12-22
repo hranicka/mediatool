@@ -69,8 +69,10 @@ func main() {
 
 	var file string
 	var dir string
+	var del bool
 	flag.StringVar(&file, "file", "", "source file path (cannot be combined with -dir)")
 	flag.StringVar(&dir, "dir", "", "source files directory (cannot be combined with -file)")
+	flag.BoolVar(&del, "del", false, "delete source files after successful conversion")
 
 	var minBitRate int
 	var minFileSize int64
@@ -99,7 +101,7 @@ func main() {
 	}
 
 	if file != "" {
-		if err := process(file, minBitRate, lang); err != nil {
+		if err := process(file, lang, minBitRate, del); err != nil {
 			logError("could not process %s: %v", file, err)
 		}
 	}
@@ -117,7 +119,7 @@ func main() {
 				return nil
 			}
 
-			if err := process(path, minBitRate, lang); err != nil {
+			if err := process(path, lang, minBitRate, del); err != nil {
 				logError("could not process %s: %v", file, err)
 			}
 			return nil
@@ -125,7 +127,7 @@ func main() {
 	}
 }
 
-func process(src string, minBitRate int, lang string) error {
+func process(src string, lang string, minBitRate int, del bool) error {
 	// read file streams
 	logInfo("opening file %s", src)
 	f, err := probe(src)
@@ -197,10 +199,16 @@ func process(src string, minBitRate int, lang string) error {
 
 			old := src + ".old"
 			if err := os.Rename(src, old); err != nil {
-				return fmt.Errorf("cannot rename original file: %v", err)
+				return fmt.Errorf("cannot rename source file: %v", err)
 			}
 			if err := os.Rename(dst, src); err != nil {
 				return fmt.Errorf("cannot rename converted file: %v", err)
+			}
+
+			if del {
+				if err := os.Remove(old); err != nil {
+					return fmt.Errorf("cannot delete source file: %v", err)
+				}
 			}
 		}
 	}
