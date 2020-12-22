@@ -177,7 +177,7 @@ func process(src string, minBitRate int, lang string) error {
 	} else if !hasLang {
 		logInfo("no conversion needed, does not contain language %s", lang)
 	} else {
-		logInfo("converting %d DTS track(s)", len(toConvert))
+		logInfo("converting %d track(s)", len(toConvert))
 		logDebug("%+v", toConvert)
 
 		if !dryRun {
