@@ -69,3 +69,7 @@ build:
 build-rpi3:
 	@echo ">> building for rpi"
 	@export GOOS=linux GOARCH=arm GOARM=7 && $(MAKE) -s build
+
+build-win:
+	@echo ">> building for windows"
+	@export GOOS=windows GOARCH=amd64 && $(MAKE) -s build
