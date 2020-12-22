@@ -13,7 +13,7 @@ endef
 	all fix check \
 	fiximports fixformat \
 	vet lint imports format staticcheck test \
-	build
+	build build-rpi
 
 all: dep fix check build
 fix: fiximports fixformat
@@ -65,3 +65,7 @@ build:
 		-X main.version=$(APP_VERSION) "\
 		-o $(BUILD_DIR) ./...
 	@cp README.md $(BUILD_DIR)/
+
+build-rpi3:
+	@echo ">> building for rpi"
+	@export GOOS=linux GOARCH=arm GOARM=7 && $(MAKE) -s build
