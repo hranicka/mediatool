@@ -150,13 +150,9 @@ func process(src string, minBitRate int, lang string) error {
 		}
 	}
 
+	hasLang := lang == ""
 	var toConvert []stream
-	var hasLang bool
 	for l, bs := range bad {
-		if lang == "" || l == lang {
-			hasLang = true
-		}
-
 		if vs, ok := valid[l]; ok {
 			// exclude commentary and low bitrate tracks
 			if commentRegExp.MatchString(vs.Tags.Title) || parseInt(vs.BitRate) < minBitRate {
@@ -167,6 +163,9 @@ func process(src string, minBitRate int, lang string) error {
 			}
 		}
 
+		if l == lang {
+			hasLang = true
+		}
 		toConvert = append(toConvert, bs)
 		logInfo("> %s: stream for conversion found", l)
 	}
