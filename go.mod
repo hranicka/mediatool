@@ -1,4 +1,4 @@
-module github.com/hranicka/matroska-dts-to-ac3
+module github.com/hranicka/mediatool
 
 go 1.15
 

@@ -7,4 +7,7 @@
 
 ### Usage
 
-`go run ./... -help`
+```
+make
+./build/converter -help
+```
