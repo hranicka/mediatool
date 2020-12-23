@@ -39,6 +39,7 @@ type stream struct {
 	CodecName string `json:"codec_name"`
 	CodecType string `json:"codec_type"`
 	BitRate   string `json:"bit_rate"`
+	Channels  int    `json:"channels"`
 	Tags      tags   `json:"tags"`
 	TypeIndex int
 }
@@ -167,7 +168,8 @@ func process(src string, lang string, minBitRate int, del bool) error {
 	for l, bs := range bad {
 		if vs, ok := valid[l]; ok {
 			// exclude commentary and low bitrate tracks
-			if commentRegExp.MatchString(vs.Tags.Title) || parseInt(vs.BitRate) < minBitRate {
+			bitRate := parseInt(vs.BitRate)
+			if commentRegExp.MatchString(vs.Tags.Title) || (bitRate > 0 && bitRate < minBitRate) || (bitRate == 0 && vs.Channels < 6) {
 				logInfo("> %s: low bitrate or commentary stream, skipping", l)
 			} else {
 				logInfo("> %s: already converted stream, skipping", l)
