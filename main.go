@@ -157,6 +157,12 @@ func process(src string, lang string, minBitRate int, del bool) error {
 
 		switch s.CodecName {
 		case codecAC3:
+			// exclude commentary and low bitrate tracks
+			bitRate := parseInt(s.BitRate)
+			if commentRegExp.MatchString(s.Tags.Title) || (bitRate > 0 && bitRate < minBitRate) || (bitRate == 0 && s.Channels < 6) {
+				logDebug("> low bitrate or commentary stream, skipping: %+v", s)
+				break
+			}
 			valid[s.Tags.Language] = s
 		case codecDTS:
 			bad[s.Tags.Language] = s
@@ -166,15 +172,9 @@ func process(src string, lang string, minBitRate int, del bool) error {
 	hasLang := lang == ""
 	var toConvert []stream
 	for l, bs := range bad {
-		if vs, ok := valid[l]; ok {
-			// exclude commentary and low bitrate tracks
-			bitRate := parseInt(vs.BitRate)
-			if commentRegExp.MatchString(vs.Tags.Title) || (bitRate > 0 && bitRate < minBitRate) || (bitRate == 0 && vs.Channels < 6) {
-				logInfo("> %s: low bitrate or commentary stream, skipping", l)
-			} else {
-				logInfo("> %s: already converted stream, skipping", l)
-				continue
-			}
+		if _, ok := valid[l]; ok {
+			logInfo("> %s: already converted stream, skipping", l)
+			continue
 		}
 
 		if l == lang {
