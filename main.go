@@ -76,10 +76,8 @@ func main() {
 	flag.BoolVar(&del, "del", false, "delete source files after successful conversion")
 
 	var minBitRate int
-	var minFileSize int64
 	var lang string
 	flag.IntVar(&minBitRate, "minbr", 448000, "minimal bitrate of track to be considered as valid/already converted")
-	flag.Int64Var(&minFileSize, "minfs", 0, "minimal file size to be processed (only with -dir)")
 	flag.StringVar(&lang, "lang", "", "yet not converted language to trigger conversion of the whole file")
 
 	flag.Parse()
@@ -111,12 +109,6 @@ func main() {
 		_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 			if !filePattern.MatchString(path) {
 				logDebug("skipping unmatched file name %s", path)
-				return nil
-			}
-
-			// TODO Bitrate would be much more suitable than file size
-			if info.Size() < minFileSize {
-				logDebug("skipping small file %s", path)
 				return nil
 			}
 
