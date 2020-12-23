@@ -50,14 +50,14 @@ func main() {
 	}
 
 	if file != "" {
-		if err := internal.Process(file, lang, minBitRate, del, dryRun); err != nil {
+		if err := internal.Process(file, lang, minBitRate, dryRun, del); err != nil {
 			internal.LogError("could not process %s: %v", file, err)
 		}
 	}
 
 	if dir != "" {
 		internal.Walk(dir, func(path string, info os.FileInfo) {
-			if err := internal.Process(path, lang, minBitRate, del, dryRun); err != nil {
+			if err := internal.Process(path, lang, minBitRate, dryRun, del); err != nil {
 				internal.LogError("could not process %s: %v", path, err)
 			}
 		})
