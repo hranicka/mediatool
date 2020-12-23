@@ -60,7 +60,7 @@ func Process(src string, lang string, minBitRate int, dryRun bool, del bool) err
 				break
 			}
 			valid[s.Tags.Language] = s
-		case CodecDTS:
+		case CodecDTS, CodecTrueHD, CodecEAC3:
 			bad[s.Tags.Language] = s
 		}
 	}
@@ -77,7 +77,7 @@ func Process(src string, lang string, minBitRate int, dryRun bool, del bool) err
 			hasLang = true
 		}
 		toConvert = append(toConvert, bs)
-		LogInfo("> %s: stream for conversion found", l)
+		LogInfo("> %s: stream for conversion found (codec %s)", l, bs.CodecName)
 	}
 
 	// convert if needed

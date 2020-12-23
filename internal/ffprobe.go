@@ -10,8 +10,12 @@ const (
 	TypeAudio = "audio"
 	// CodecDTS is a DTS codec
 	CodecDTS = "dts"
+	// CodecTrueHD is a CodecTrueHD codec
+	CodecTrueHD = "truehd"
 	// CodecAC3 is an AC3 codec
 	CodecAC3 = "ac3"
+	// CodecEAC3 is an E-AC3 codec
+	CodecEAC3 = "eac3"
 )
 
 type Tags struct {
