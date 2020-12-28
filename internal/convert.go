@@ -126,7 +126,7 @@ func convert(src string, dst string, streams []Stream) error {
 	for _, s := range streams {
 		args = append(args, fmt.Sprintf("-c:a:%d", s.TypeIndex), "ac3", fmt.Sprintf("-b:a:%d", s.TypeIndex), "640k")
 	}
-	args = append(args, "-max_muxing_queue_size", "8096", dst)
+	args = append(args, "-max_muxing_queue_size", "9999", dst)
 
 	_, err := RunCmd("ffmpeg", args...)
 	return err
