@@ -12,6 +12,8 @@ const (
 	CodecDTS = "dts"
 	// CodecTrueHD is a CodecTrueHD codec
 	CodecTrueHD = "truehd"
+	// CodecFLAC is a FLAC codec
+	CodecFLAC = "flac"
 	// CodecAC3 is an AC3 codec
 	CodecAC3 = "ac3"
 	// CodecEAC3 is an E-AC3 codec

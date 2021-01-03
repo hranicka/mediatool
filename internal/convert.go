@@ -60,7 +60,7 @@ func Process(src string, lang string, minBitRate int, dryRun bool, del bool) err
 				break
 			}
 			valid[s.Tags.Language] = s
-		case CodecDTS, CodecTrueHD, CodecEAC3:
+		case CodecDTS, CodecTrueHD, CodecFLAC, CodecEAC3:
 			bad[s.Tags.Language] = s
 		}
 	}
