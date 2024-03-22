@@ -20,6 +20,13 @@ const (
 	CodecEAC3 = "eac3"
 )
 
+const (
+	// TypeVideo is a video stream
+	TypeVideo = "video"
+	// CodecH264 is an H264 codec
+	CodecH264 = "h264"
+)
+
 type Tags struct {
 	Language string `json:"language"`
 	Title    string `json:"title"`
@@ -35,8 +42,15 @@ type Stream struct {
 	TypeIndex int
 }
 
+type Format struct {
+	Duration string `json:"duration"`
+	Size     string `json:"size"`
+	BitRate  string `json:"bit_rate"`
+}
+
 type FFprobe struct {
 	Streams []Stream `json:"streams"`
+	Format  Format   `json:"format"`
 }
 
 func Probe(src string) (*FFprobe, error) {

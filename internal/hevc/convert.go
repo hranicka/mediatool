@@ -1,20 +1,17 @@
-// Package ac3 provides conversion to AC3 codec.
-package ac3
+// Package hevc provides conversion to HEVC codec.
+package hevc
 
 import (
 	"fmt"
 	"github.com/hranicka/mediatool/internal"
 	"os"
-	"regexp"
 	"strconv"
 	"strings"
 )
 
-var (
-	commentRegExp = regexp.MustCompile(`(?i)(?:comment|director)`)
-)
+const vaapiDevice = "/dev/dri/renderD128"
 
-func Process(src string, lang string, minBitRate int, dryRun bool, del bool) error {
+func Process(src string, dryRun bool, del bool) error {
 	// read file streams
 	internal.LogInfo("opening file %s", src)
 	f, err := internal.Probe(src)
@@ -22,8 +19,14 @@ func Process(src string, lang string, minBitRate int, dryRun bool, del bool) err
 		return fmt.Errorf("cannot get file info: %v", err)
 	}
 
+	fileBitrate, err := strconv.Atoi(f.Format.BitRate)
+	if err != nil {
+		return fmt.Errorf("cannot get file bitrate: %v", err)
+	}
+
 	// add type-specific stream counters
 	cnt := make(map[string]int)
+	var bitrateSum int
 	for i, s := range f.Streams {
 		if _, ok := cnt[s.CodecType]; ok {
 			cnt[s.CodecType]++
@@ -31,50 +34,36 @@ func Process(src string, lang string, minBitRate int, dryRun bool, del bool) err
 			cnt[s.CodecType] = 0
 		}
 		f.Streams[i].TypeIndex = cnt[s.CodecType]
+
+		if s.BitRate != "" {
+			br, _ := strconv.Atoi(s.BitRate)
+			bitrateSum += br
+		}
 	}
 
 	// detect streams for conversion
-	valid := make(map[string]internal.Stream)
-	bad := make(map[string]internal.Stream)
+	var toConvert []internal.Stream
 	for _, s := range f.Streams {
-		if s.CodecType != internal.TypeAudio {
+		if s.CodecType != internal.TypeVideo {
 			continue
+		}
+
+		// add missing bitrate
+		if s.BitRate == "" {
+			s.BitRate = strconv.Itoa(fileBitrate - bitrateSum)
 		}
 
 		switch s.CodecName {
-		case internal.CodecAC3:
-			// exclude commentary and low bitrate tracks
-			bitRate, _ := strconv.Atoi(s.BitRate)
-			if commentRegExp.MatchString(s.Tags.Title) || (bitRate > 0 && bitRate < minBitRate) || (bitRate == 0 && s.Channels < 6) {
-				internal.LogDebug("> low bitrate or commentary stream, skipping: %+v", s)
-				break
-			}
-			valid[s.Tags.Language] = s
-		case internal.CodecDTS, internal.CodecTrueHD, internal.CodecFLAC, internal.CodecEAC3:
-			bad[s.Tags.Language] = s
+		case internal.CodecH264:
+			toConvert = append(toConvert, s)
 		}
-	}
-
-	hasLang := lang == ""
-	var toConvert []internal.Stream
-	for l, bs := range bad {
-		if _, ok := valid[l]; ok {
-			internal.LogInfo("> %s: already converted stream, skipping", l)
-			continue
-		}
-
-		if l == lang {
-			hasLang = true
-		}
-		toConvert = append(toConvert, bs)
-		internal.LogInfo("> %s: stream for conversion found (codec %s)", l, bs.CodecName)
 	}
 
 	// convert if needed
 	if len(toConvert) == 0 {
 		internal.LogInfo("no conversion needed, nothing to convert")
-	} else if !hasLang {
-		internal.LogInfo("no conversion needed, does not contain language %s", lang)
+	} else if len(toConvert) > 1 {
+		internal.LogError("multiple video streams detected, cannot convert")
 	} else {
 		internal.LogInfo("converting %d track(s)", len(toConvert))
 		internal.LogDebug("%+v", toConvert)
@@ -107,15 +96,25 @@ func Process(src string, lang string, minBitRate int, dryRun bool, del bool) err
 
 func convert(src string, dst string, streams []internal.Stream) error {
 	var args []string
+	args = append(args, "-vaapi_device", vaapiDevice)
 	args = append(args, "-i", src)
+	args = append(args, "-vf", "format=nv12,hwupload")
 	args = append(args, "-map", "0")
-	args = append(args, "-c:v", "copy")
-	args = append(args, "-c:a", "copy")
 
 	for _, s := range streams {
-		args = append(args, fmt.Sprintf("-c:a:%d", s.TypeIndex), "ac3", fmt.Sprintf("-b:a:%d", s.TypeIndex), "640k")
+		args = append(args, fmt.Sprintf("-c:v:%d", s.TypeIndex), "hevc_vaapi")
+
+		br, _ := strconv.Atoi(s.BitRate)
+		if br > 0 {
+			args = append(args, fmt.Sprintf("-b:v:%d", s.TypeIndex), fmt.Sprintf("%.0fk", (float64(br)/1024)*0.6))
+		} else {
+			args = append(args, "-qp", "20")
+		}
+
+		args = append(args, "-low_power", "1")
 	}
 
+	args = append(args, "-c:a", "copy")
 	args = append(args, "-c:s", "copy")
 	args = append(args, "-max_muxing_queue_size", "4096", dst)
 
