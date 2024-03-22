@@ -19,5 +19,5 @@ test:
 
 build:
 	mkdir -p ./dist
-	go build -o ./dist/ ./cmd/dtsconverter
+	go build -o ./dist/ ./cmd/ac3converter
 	go build -o ./dist/ ./cmd/dupfinder

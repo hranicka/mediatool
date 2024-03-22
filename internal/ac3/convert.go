@@ -1,5 +1,5 @@
-// Package dts provides conversion of DTS audio tracks to AC3.
-package dts
+// Package ac3 provides conversion to AC3 codec.
+package ac3
 
 import (
 	"fmt"

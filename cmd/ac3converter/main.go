@@ -2,7 +2,7 @@ package main
 
 import (
 	"flag"
-	"github.com/hranicka/mediatool/internal/dts"
+	"github.com/hranicka/mediatool/internal/ac3"
 	"os"
 
 	"github.com/hranicka/mediatool/internal"
@@ -40,14 +40,14 @@ func main() {
 	}
 
 	if file != "" {
-		if err := dts.Process(file, lang, minBitRate, dryRun, del); err != nil {
+		if err := ac3.Process(file, lang, minBitRate, dryRun, del); err != nil {
 			internal.LogError("could not process %s: %v", file, err)
 		}
 	}
 
 	if dir != "" {
 		internal.Walk(dir, func(path string, info os.FileInfo) {
-			if err := dts.Process(path, lang, minBitRate, dryRun, del); err != nil {
+			if err := ac3.Process(path, lang, minBitRate, dryRun, del); err != nil {
 				internal.LogError("could not process %s: %v", path, err)
 			}
 		})

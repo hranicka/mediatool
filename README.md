@@ -1,6 +1,6 @@
 # MediaTool
 
-## dtsconverter
+## ac3converter
 
 Application searches for MKV (Matroska) files which contain audio streams
 in DTS, TrueHD or E-AC3 codecs. If such a file does not contain AC3 stream
@@ -20,6 +20,6 @@ Application searches for duplicated audio tracks in MKV (Matroska) files.
 
 ```
 make
-./dist/dtsconverter -help
+./dist/ac3converter -help
 ./dist/dupfinder -help
 ```
