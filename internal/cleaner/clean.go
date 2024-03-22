@@ -46,6 +46,12 @@ func Process(src string, dryRun bool, del bool) error {
 			continue
 		}
 
+		// keep if it's the only track of the type
+		if cnt[s.CodecType] == 1 {
+			continue
+		}
+
+		// remove unwanted languages
 		var whitelisted bool
 		for _, lang := range whitelistLang {
 			if strings.EqualFold(s.Tags.Language, lang) {
