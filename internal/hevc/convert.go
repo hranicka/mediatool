@@ -9,7 +9,17 @@ import (
 	"strings"
 )
 
-const vaapiDevice = "/dev/dri/renderD128"
+const (
+	EncQualityTypeAuto = "auto"
+	EncQualityTypeQP   = "qp"
+)
+
+var (
+	VaapiDevice       = "/dev/dri/renderD128"
+	EncQualityPercent = 0.6
+	EncQualityPreset  = 20
+	EncQualityType    = EncQualityTypeAuto
+)
 
 func Process(src string, dryRun bool, del bool) error {
 	// read file streams
@@ -96,7 +106,7 @@ func Process(src string, dryRun bool, del bool) error {
 
 func convert(src string, dst string, streams []internal.Stream) error {
 	var args []string
-	args = append(args, "-vaapi_device", vaapiDevice)
+	args = append(args, "-vaapi_device", VaapiDevice)
 	args = append(args, "-i", src)
 	args = append(args, "-vf", "format=nv12,hwupload")
 	args = append(args, "-map", "0")
@@ -105,10 +115,10 @@ func convert(src string, dst string, streams []internal.Stream) error {
 		args = append(args, fmt.Sprintf("-c:v:%d", s.TypeIndex), "hevc_vaapi")
 
 		br, _ := strconv.Atoi(s.BitRate)
-		if br > 0 {
-			args = append(args, fmt.Sprintf("-b:v:%d", s.TypeIndex), fmt.Sprintf("%.0fk", (float64(br)/1024)*0.6))
+		if EncQualityType == EncQualityTypeAuto && br > 0 {
+			args = append(args, fmt.Sprintf("-b:v:%d", s.TypeIndex), fmt.Sprintf("%.0fk", (float64(br)/1024)*EncQualityPercent))
 		} else {
-			args = append(args, "-qp", "20")
+			args = append(args, "-qp", fmt.Sprintf("%d", EncQualityPreset))
 		}
 
 		args = append(args, "-low_power", "1")
