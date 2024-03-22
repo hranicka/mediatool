@@ -117,7 +117,8 @@ func convert(src string, dst string, streams []internal.Stream) error {
 	}
 
 	args = append(args, "-c:s", "copy")
-	args = append(args, "-max_muxing_queue_size", "4096", dst)
+	args = append(args, "-max_muxing_queue_size", "4096")
+	args = append(args, dst)
 
 	internal.LogDebug(fmt.Sprintf("running: %s %v\n", internal.FFmpegPath, strings.Join(args, " ")))
 

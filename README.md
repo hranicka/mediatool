@@ -17,6 +17,11 @@ converted and HEVC track replaces the original one.
 
 Application searches for duplicated audio tracks in MKV (Matroska) files.
 
+# cleaner
+
+Application searches for MKV (Matroska) files which contain streams
+without whitelisted language. Such streams are being removed from the file.
+
 ### Requirements
 
 * ffmpeg

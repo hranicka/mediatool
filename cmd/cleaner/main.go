@@ -2,7 +2,7 @@ package main
 
 import (
 	"flag"
-	"github.com/hranicka/mediatool/internal/ac3"
+	"github.com/hranicka/mediatool/internal/cleaner"
 	"os"
 
 	"github.com/hranicka/mediatool/internal"
@@ -22,11 +22,6 @@ func main() {
 	flag.BoolVar(&del, "del", false, "delete source files after successful conversion")
 	flag.BoolVar(&dryRun, "dry", false, "run in dry mode = without actual conversion")
 
-	var minBitRate int
-	var lang string
-	flag.IntVar(&minBitRate, "minbr", 448000, "minimal bitrate of track to be considered as valid/already converted")
-	flag.StringVar(&lang, "lang", "", "yet not converted language to trigger conversion of the whole file")
-
 	flag.Parse()
 
 	// validate
@@ -41,14 +36,14 @@ func main() {
 	}
 
 	if file != "" {
-		if err := ac3.Process(file, lang, minBitRate, dryRun, del); err != nil {
+		if err := cleaner.Process(file, dryRun, del); err != nil {
 			internal.LogError("could not process %s: %v", file, err)
 		}
 	}
 
 	if dir != "" {
 		internal.Walk(dir, func(path string, info os.FileInfo) {
-			if err := ac3.Process(path, lang, minBitRate, dryRun, del); err != nil {
+			if err := cleaner.Process(path, dryRun, del); err != nil {
 				internal.LogError("could not process %s: %v", path, err)
 			}
 		})

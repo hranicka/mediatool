@@ -1,15 +1,20 @@
-// Package hevc provides conversion to HEVC codec.
-package hevc
+// Package cleaner removes unwanted streams from media files.
+package cleaner
 
 import (
 	"fmt"
 	"github.com/hranicka/mediatool/internal"
 	"os"
-	"strconv"
 	"strings"
 )
 
-const vaapiDevice = "/dev/dri/renderD128"
+var (
+	whitelistLang = []string{
+		"", "und", "unknown",
+		"english", "eng", "en",
+		"czech", "cze", "ces", "cz", "cs",
+	}
+)
 
 func Process(src string, dryRun bool, del bool) error {
 	// read file streams
@@ -19,14 +24,8 @@ func Process(src string, dryRun bool, del bool) error {
 		return fmt.Errorf("cannot get file info: %v", err)
 	}
 
-	fileBitrate, err := strconv.Atoi(f.Format.BitRate)
-	if err != nil {
-		return fmt.Errorf("cannot get file bitrate: %v", err)
-	}
-
 	// add type-specific stream counters
 	cnt := make(map[string]int)
-	var bitrateSum int
 	for i, s := range f.Streams {
 		if _, ok := cnt[s.CodecType]; ok {
 			cnt[s.CodecType]++
@@ -34,43 +33,42 @@ func Process(src string, dryRun bool, del bool) error {
 			cnt[s.CodecType] = 0
 		}
 		f.Streams[i].TypeIndex = cnt[s.CodecType]
-
-		if s.BitRate != "" {
-			br, _ := strconv.Atoi(s.BitRate)
-			bitrateSum += br
-		}
 	}
 
 	// detect streams for conversion
-	var toConvert []internal.Stream
+	var toRemove []internal.Stream
 	for _, s := range f.Streams {
-		if s.CodecType != internal.TypeVideo {
+		if s.CodecType == internal.TypeVideo {
+			// remove images since they act as video after ffmpeg conversion
+			if s.CodecName == "mjpeg" {
+				toRemove = append(toRemove, s)
+			}
 			continue
 		}
 
-		// add missing bitrate
-		if s.BitRate == "" {
-			s.BitRate = strconv.Itoa(fileBitrate - bitrateSum)
+		var whitelisted bool
+		for _, lang := range whitelistLang {
+			if strings.EqualFold(s.Tags.Language, lang) {
+				whitelisted = true
+				break
+			}
 		}
 
-		switch s.CodecName {
-		case internal.CodecH264:
-			toConvert = append(toConvert, s)
+		if !whitelisted {
+			toRemove = append(toRemove, s)
 		}
 	}
 
 	// convert if needed
-	if len(toConvert) == 0 {
-		internal.LogInfo("no conversion needed, nothing to convert")
-	} else if len(toConvert) > 1 {
-		internal.LogError("multiple video streams detected, cannot convert")
+	if len(toRemove) == 0 {
+		internal.LogInfo("no cleanup needed")
 	} else {
-		internal.LogInfo("converting %d track(s)", len(toConvert))
-		internal.LogDebug("%+v", toConvert)
+		internal.LogInfo("removing %d track(s)", len(toRemove))
+		internal.LogDebug("%+v", toRemove)
 
 		if !dryRun {
 			dst := src + ".tmp.mkv" // TODO Validate original extension
-			if err := convert(src, dst, toConvert); err != nil {
+			if err := cleanup(src, dst, toRemove); err != nil {
 				return fmt.Errorf("cannot convert file: %v", err)
 			}
 
@@ -94,28 +92,33 @@ func Process(src string, dryRun bool, del bool) error {
 	return nil
 }
 
-func convert(src string, dst string, streams []internal.Stream) error {
+func cleanup(src string, dst string, streams []internal.Stream) error {
 	var args []string
-	args = append(args, "-vaapi_device", vaapiDevice)
 	args = append(args, "-i", src)
-	args = append(args, "-vf", "format=nv12,hwupload")
-	args = append(args, "-map", "0")
+
+	// preserve just video, audio and subtitles
+	args = append(args, "-map", "0:v")
+	args = append(args, "-map", "0:a")
+	args = append(args, "-map", "0:s")
 
 	for _, s := range streams {
-		args = append(args, fmt.Sprintf("-c:v:%d", s.TypeIndex), "hevc_vaapi")
-
-		br, _ := strconv.Atoi(s.BitRate)
-		if br > 0 {
-			args = append(args, fmt.Sprintf("-b:v:%d", s.TypeIndex), fmt.Sprintf("%.0fk", (float64(br)/1024)*0.6))
-		} else {
-			args = append(args, "-qp", "20")
+		var t string
+		switch s.CodecType {
+		case internal.TypeVideo:
+			t = "v"
+		case internal.TypeAudio:
+			t = "a"
+		case internal.TypeSubtitles:
+			t = "s"
+		default:
+			return fmt.Errorf("unsupported stream type: %s", s.CodecType)
 		}
 
-		args = append(args, "-low_power", "1")
+		args = append(args, "-map", fmt.Sprintf("-0:%s:%d", t, s.TypeIndex))
 	}
 
-	args = append(args, "-c:a", "copy")
-	args = append(args, "-c:s", "copy")
+	args = append(args, "-c", "copy")
+	args = append(args, "-map_metadata:g", "0:g") // remove additional metadata
 	args = append(args, "-max_muxing_queue_size", "4096")
 	args = append(args, dst)
 

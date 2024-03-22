@@ -27,6 +27,11 @@ const (
 	CodecH264 = "h264"
 )
 
+const (
+	// TypeSubtitles is a subtitle stream
+	TypeSubtitles = "subtitle"
+)
+
 type Tags struct {
 	Language string `json:"language"`
 	Title    string `json:"title"`
