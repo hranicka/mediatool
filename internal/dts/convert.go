@@ -1,33 +1,22 @@
-package internal
+// Package dts provides conversion of DTS audio tracks to AC3.
+package dts
 
 import (
 	"fmt"
+	"github.com/hranicka/mediatool/internal"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strconv"
 )
 
 var (
 	commentRegExp = regexp.MustCompile(`(?i)(?:comment|director)`)
-	filePattern   = regexp.MustCompile(`(?i)\.mkv$`)
 )
-
-func Walk(dir string, fn func(path string, info os.FileInfo)) {
-	_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
-		if !filePattern.MatchString(path) {
-			LogDebug("skipping unmatched file name %s", path)
-			return nil
-		}
-		fn(path, info)
-		return nil
-	})
-}
 
 func Process(src string, lang string, minBitRate int, dryRun bool, del bool) error {
 	// read file streams
-	LogInfo("opening file %s", src)
-	f, err := Probe(src)
+	internal.LogInfo("opening file %s", src)
+	f, err := internal.Probe(src)
 	if err != nil {
 		return fmt.Errorf("cannot get file info: %v", err)
 	}
@@ -44,32 +33,32 @@ func Process(src string, lang string, minBitRate int, dryRun bool, del bool) err
 	}
 
 	// detect streams for conversion
-	valid := make(map[string]Stream)
-	bad := make(map[string]Stream)
+	valid := make(map[string]internal.Stream)
+	bad := make(map[string]internal.Stream)
 	for _, s := range f.Streams {
-		if s.CodecType != TypeAudio {
+		if s.CodecType != internal.TypeAudio {
 			continue
 		}
 
 		switch s.CodecName {
-		case CodecAC3:
+		case internal.CodecAC3:
 			// exclude commentary and low bitrate tracks
 			bitRate, _ := strconv.Atoi(s.BitRate)
 			if commentRegExp.MatchString(s.Tags.Title) || (bitRate > 0 && bitRate < minBitRate) || (bitRate == 0 && s.Channels < 6) {
-				LogDebug("> low bitrate or commentary stream, skipping: %+v", s)
+				internal.LogDebug("> low bitrate or commentary stream, skipping: %+v", s)
 				break
 			}
 			valid[s.Tags.Language] = s
-		case CodecDTS, CodecTrueHD, CodecFLAC, CodecEAC3:
+		case internal.CodecDTS, internal.CodecTrueHD, internal.CodecFLAC, internal.CodecEAC3:
 			bad[s.Tags.Language] = s
 		}
 	}
 
 	hasLang := lang == ""
-	var toConvert []Stream
+	var toConvert []internal.Stream
 	for l, bs := range bad {
 		if _, ok := valid[l]; ok {
-			LogInfo("> %s: already converted stream, skipping", l)
+			internal.LogInfo("> %s: already converted stream, skipping", l)
 			continue
 		}
 
@@ -77,17 +66,17 @@ func Process(src string, lang string, minBitRate int, dryRun bool, del bool) err
 			hasLang = true
 		}
 		toConvert = append(toConvert, bs)
-		LogInfo("> %s: stream for conversion found (codec %s)", l, bs.CodecName)
+		internal.LogInfo("> %s: stream for conversion found (codec %s)", l, bs.CodecName)
 	}
 
 	// convert if needed
 	if len(toConvert) == 0 {
-		LogInfo("no conversion needed, nothing to convert")
+		internal.LogInfo("no conversion needed, nothing to convert")
 	} else if !hasLang {
-		LogInfo("no conversion needed, does not contain language %s", lang)
+		internal.LogInfo("no conversion needed, does not contain language %s", lang)
 	} else {
-		LogInfo("converting %d track(s)", len(toConvert))
-		LogDebug("%+v", toConvert)
+		internal.LogInfo("converting %d track(s)", len(toConvert))
+		internal.LogDebug("%+v", toConvert)
 
 		if !dryRun {
 			dst := src + ".tmp.mkv" // TODO Validate original extension
@@ -111,11 +100,11 @@ func Process(src string, lang string, minBitRate int, dryRun bool, del bool) err
 		}
 	}
 
-	LogInfo("file finished\n")
+	internal.LogInfo("file finished\n")
 	return nil
 }
 
-func convert(src string, dst string, streams []Stream) error {
+func convert(src string, dst string, streams []internal.Stream) error {
 	// TODO Assumes all streams are audio
 
 	args := []string{"-i", src, "-map", "0:v", "-map", "0:a"}
@@ -128,6 +117,6 @@ func convert(src string, dst string, streams []Stream) error {
 	}
 	args = append(args, "-max_muxing_queue_size", "4096", dst)
 
-	_, err := RunCmd("ffmpeg", args...)
+	_, err := internal.RunCmd("ffmpeg", args...)
 	return err
 }
