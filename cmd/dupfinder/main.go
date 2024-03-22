@@ -4,31 +4,20 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"flag"
-	"fmt"
 	"os"
 	"strconv"
 
 	"github.com/hranicka/mediatool/internal"
 )
 
-// Version generated during build process.
-var version string
-
 func main() {
 	// parse cli args
-	v := flag.Bool("version", false, "prints application version")
 	flag.BoolVar(&internal.Verbose, "v", false, "verbose/debug output")
 
 	var dir string
 	flag.StringVar(&dir, "dir", "", "source files directory")
 
 	flag.Parse()
-
-	// Print version
-	if *v {
-		fmt.Println(version)
-		return
-	}
 
 	// validate
 	if dir == "" {

@@ -14,5 +14,6 @@ and AC3 track is appended in the file.
 
 ```
 make
-./build/converter -help
+./dist/converter -help
+./dist/dupfinder -help
 ```

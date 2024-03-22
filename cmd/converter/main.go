@@ -2,18 +2,13 @@ package main
 
 import (
 	"flag"
-	"fmt"
 	"os"
 
 	"github.com/hranicka/mediatool/internal"
 )
 
-// Version generated during build process.
-var version string
-
 func main() {
 	// parse cli args
-	v := flag.Bool("version", false, "prints application version")
 	flag.BoolVar(&internal.Verbose, "v", false, "verbose/debug output")
 
 	var file string
@@ -31,12 +26,6 @@ func main() {
 	flag.StringVar(&lang, "lang", "", "yet not converted language to trigger conversion of the whole file")
 
 	flag.Parse()
-
-	// Print version
-	if *v {
-		fmt.Println(version)
-		return
-	}
 
 	// validate
 	if (file == "" && dir == "") || (file != "" && dir != "") {

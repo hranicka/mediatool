@@ -1,3 +1,7 @@
+# app files
+/config.yaml.local
+/dist
+
 # test traces
 /coverage.txt
 /report.xml
