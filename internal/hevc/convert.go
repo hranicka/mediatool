@@ -4,6 +4,7 @@ package hevc
 import (
 	"fmt"
 	"github.com/hranicka/mediatool/internal"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -23,7 +24,7 @@ var (
 
 func Process(src string, dryRun bool, del bool) error {
 	// read file streams
-	internal.LogInfo("opening file %s", src)
+	slog.Debug("opening file", "path", src)
 	f, err := internal.Probe(src)
 	if err != nil {
 		return fmt.Errorf("cannot get file info: %v", err)
@@ -71,12 +72,11 @@ func Process(src string, dryRun bool, del bool) error {
 
 	// convert if needed
 	if len(toConvert) == 0 {
-		internal.LogInfo("no conversion needed, nothing to convert")
+		slog.Debug("no conversion needed", "file", src)
 	} else if len(toConvert) > 1 {
-		internal.LogError("multiple video streams detected, cannot convert")
+		slog.Warn("multiple video streams detected, cannot convert", "file", src)
 	} else {
-		internal.LogInfo("converting %d track(s)", len(toConvert))
-		internal.LogDebug("%+v", toConvert)
+		slog.Info("converting tracks", "file", src, "cnt", len(toConvert), "streams", toConvert)
 
 		if !dryRun {
 			dst := src + ".tmp.mkv" // TODO Validate original extension
@@ -100,7 +100,7 @@ func Process(src string, dryRun bool, del bool) error {
 		}
 	}
 
-	internal.LogInfo("file finished\n")
+	slog.Debug("file finished", "file", src)
 	return nil
 }
 
@@ -129,7 +129,7 @@ func convert(src string, dst string, streams []internal.Stream) error {
 	args = append(args, "-max_muxing_queue_size", "4096")
 	args = append(args, dst)
 
-	internal.LogDebug(fmt.Sprintf("running: %s %v\n", internal.FFmpegPath, strings.Join(args, " ")))
+	slog.Debug("running ffmpeg", "file", src, "cmd", fmt.Sprintf("%s %v\n", internal.FFmpegPath, strings.Join(args, " ")))
 
 	_, err := internal.RunCmd(internal.FFmpegPath, args...)
 	return err

@@ -4,6 +4,7 @@ package internal
 import (
 	"bytes"
 	"fmt"
+	"log/slog"
 	"os/exec"
 )
 
@@ -14,7 +15,7 @@ func RunCmd(name string, arg ...string) ([]byte, error) {
 	cmd.Stdout = &cmdOut
 	cmd.Stderr = &cmdErr
 
-	LogDebug(cmd.String())
+	slog.Debug("running command", "cmd", cmd.String())
 	if err := cmd.Run(); err != nil {
 		return nil, fmt.Errorf("%v: %s", err, cmdErr.String())
 	}

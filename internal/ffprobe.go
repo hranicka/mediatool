@@ -3,6 +3,7 @@ package internal
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 )
 
 const (
@@ -63,7 +64,7 @@ func Probe(src string) (*FFprobe, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cannot open file: %v", err)
 	}
-	LogDebug(string(out))
+	slog.Debug("probing file", "src", src, "output", string(out))
 
 	f := &FFprobe{}
 	if err := json.Unmarshal(out, f); err != nil {

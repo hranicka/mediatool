@@ -4,6 +4,7 @@ package ac3
 import (
 	"fmt"
 	"github.com/hranicka/mediatool/internal"
+	"log/slog"
 	"os"
 	"regexp"
 	"strconv"
@@ -16,7 +17,7 @@ var (
 
 func Process(src string, lang string, minBitRate int, dryRun bool, del bool) error {
 	// read file streams
-	internal.LogInfo("opening file %s", src)
+	slog.Debug("opening file", "path", src)
 	f, err := internal.Probe(src)
 	if err != nil {
 		return fmt.Errorf("cannot get file info: %v", err)
@@ -46,7 +47,7 @@ func Process(src string, lang string, minBitRate int, dryRun bool, del bool) err
 			// exclude commentary and low bitrate tracks
 			bitRate, _ := strconv.Atoi(s.BitRate)
 			if commentRegExp.MatchString(s.Tags.Title) || (bitRate > 0 && bitRate < minBitRate) || (bitRate == 0 && s.Channels < 6) {
-				internal.LogDebug("> low bitrate or commentary stream, skipping: %+v", s)
+				slog.Debug("low bitrate or commentary stream, skipping", "file", src, "stream", s)
 				break
 			}
 			valid[s.Tags.Language] = s
@@ -59,7 +60,7 @@ func Process(src string, lang string, minBitRate int, dryRun bool, del bool) err
 	var toConvert []internal.Stream
 	for l, bs := range bad {
 		if _, ok := valid[l]; ok {
-			internal.LogInfo("> %s: already converted stream, skipping", l)
+			slog.Debug("already converted stream, skipping", "file", src, "stream", l)
 			continue
 		}
 
@@ -67,17 +68,16 @@ func Process(src string, lang string, minBitRate int, dryRun bool, del bool) err
 			hasLang = true
 		}
 		toConvert = append(toConvert, bs)
-		internal.LogInfo("> %s: stream for conversion found (codec %s)", l, bs.CodecName)
+		slog.Debug("stream for conversion found (codec %s)", "file", src, "stream", l, "codec", bs.CodecName)
 	}
 
 	// convert if needed
 	if len(toConvert) == 0 {
-		internal.LogInfo("no conversion needed, nothing to convert")
+		slog.Debug("no conversion needed, nothing to convert", "file", src)
 	} else if !hasLang {
-		internal.LogInfo("no conversion needed, does not contain language %s", lang)
+		slog.Debug("no conversion needed, does not contain language", "file", src, "lang", lang)
 	} else {
-		internal.LogInfo("converting %d track(s)", len(toConvert))
-		internal.LogDebug("%+v", toConvert)
+		slog.Info("converting tracks", "file", src, "cnt", len(toConvert), "streams", toConvert)
 
 		if !dryRun {
 			dst := src + ".tmp.mkv" // TODO Validate original extension
@@ -101,7 +101,7 @@ func Process(src string, lang string, minBitRate int, dryRun bool, del bool) err
 		}
 	}
 
-	internal.LogInfo("file finished\n")
+	slog.Debug("file finished", "file", src)
 	return nil
 }
 
@@ -120,7 +120,7 @@ func convert(src string, dst string, streams []internal.Stream) error {
 	args = append(args, "-max_muxing_queue_size", "4096")
 	args = append(args, dst)
 
-	internal.LogDebug(fmt.Sprintf("running: %s %v\n", internal.FFmpegPath, strings.Join(args, " ")))
+	slog.Debug("running ffmpeg", "file", src, "cmd", fmt.Sprintf("%s %v\n", internal.FFmpegPath, strings.Join(args, " ")))
 
 	_, err := internal.RunCmd(internal.FFmpegPath, args...)
 	return err

@@ -4,6 +4,7 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"flag"
+	"log/slog"
 	"os"
 	"strconv"
 
@@ -12,12 +13,16 @@ import (
 
 func main() {
 	// parse cli args
-	flag.BoolVar(&internal.Verbose, "v", false, "verbose/debug output")
+	verbose := flag.Bool("v", false, "verbose/debug output")
 
 	var dir string
 	flag.StringVar(&dir, "dir", "", "source files directory")
 
 	flag.Parse()
+
+	if *verbose {
+		slog.SetLogLoggerLevel(slog.LevelDebug)
+	}
 
 	// validate
 	if dir == "" {
@@ -26,11 +31,11 @@ func main() {
 	}
 
 	internal.Walk(dir, func(path string, info os.FileInfo) {
-		internal.LogDebug("opening file %s", path)
+		slog.Debug("opening file", "path", path)
 
 		f, err := internal.Probe(path)
 		if err != nil {
-			internal.LogError("cannot get file info of %s: %v", path, err)
+			slog.Error("cannot probe file", "path", path, "err", err)
 			return
 		}
 
@@ -60,14 +65,9 @@ func main() {
 		}
 
 		if len(dups) > 0 {
-			internal.LogInfo("possibly duplicated tracks in %s", path)
-			for _, s := range dups {
-				internal.LogInfo("> %+v", s)
-
-			}
-			internal.LogInfo("\n")
+			slog.Info("possibly duplicated tracks", "path", path, "streams", dups)
 		}
 
-		internal.LogDebug("file finished")
+		slog.Debug("file finished", "path", path)
 	})
 }

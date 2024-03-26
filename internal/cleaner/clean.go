@@ -4,6 +4,7 @@ package cleaner
 import (
 	"fmt"
 	"github.com/hranicka/mediatool/internal"
+	"log/slog"
 	"os"
 	"strings"
 )
@@ -18,7 +19,7 @@ var (
 
 func Process(src string, dryRun bool, del bool) error {
 	// read file streams
-	internal.LogInfo("opening file %s", src)
+	slog.Debug("opening file", "path", src)
 	f, err := internal.Probe(src)
 	if err != nil {
 		return fmt.Errorf("cannot get file info: %v", err)
@@ -67,10 +68,9 @@ func Process(src string, dryRun bool, del bool) error {
 
 	// convert if needed
 	if len(toRemove) == 0 {
-		internal.LogInfo("no cleanup needed")
+		slog.Debug("no cleanup needed", "file", src)
 	} else {
-		internal.LogInfo("removing %d track(s)", len(toRemove))
-		internal.LogDebug("%+v", toRemove)
+		slog.Info("removing tracks", "file", src, "cnt", len(toRemove), "streams", toRemove)
 
 		if !dryRun {
 			dst := src + ".tmp.mkv" // TODO Validate original extension
@@ -94,7 +94,7 @@ func Process(src string, dryRun bool, del bool) error {
 		}
 	}
 
-	internal.LogInfo("file finished\n")
+	slog.Debug("file finished", "file", src)
 	return nil
 }
 
@@ -128,7 +128,7 @@ func cleanup(src string, dst string, streams []internal.Stream) error {
 	args = append(args, "-max_muxing_queue_size", "4096")
 	args = append(args, dst)
 
-	internal.LogDebug(fmt.Sprintf("running: %s %v\n", internal.FFmpegPath, strings.Join(args, " ")))
+	slog.Debug("running ffmpeg", "file", src, "cmd", fmt.Sprintf("%s %v\n", internal.FFmpegPath, strings.Join(args, " ")))
 
 	_, err := internal.RunCmd(internal.FFmpegPath, args...)
 	return err

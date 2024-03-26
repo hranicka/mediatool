@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"github.com/hranicka/mediatool/internal/hevc"
+	"log/slog"
 	"os"
 
 	"github.com/hranicka/mediatool/internal"
@@ -10,7 +11,7 @@ import (
 
 func main() {
 	// parse cli args
-	flag.BoolVar(&internal.Verbose, "v", false, "verbose/debug output")
+	verbose := flag.Bool("v", false, "verbose/debug output")
 	flag.StringVar(&internal.FFmpegPath, "ffmpeg", "ffmpeg", "ffmpeg path")
 	flag.StringVar(&hevc.VaapiDevice, "vaapi_device", "/dev/dri/renderD128", "ffmpeg vaapi_device")
 	flag.Float64Var(&hevc.EncQualityPercent, "quality_percent", 0.6, "percentage bitrate quality according to source")
@@ -28,6 +29,10 @@ func main() {
 
 	flag.Parse()
 
+	if *verbose {
+		slog.SetLogLoggerLevel(slog.LevelDebug)
+	}
+
 	// validate
 	if (file == "" && dir == "") || (file != "" && dir != "") {
 		flag.PrintDefaults()
@@ -36,19 +41,19 @@ func main() {
 
 	// run
 	if dryRun {
-		internal.LogDebug("DRY RUN")
+		slog.Debug("DRY RUN")
 	}
 
 	if file != "" {
 		if err := hevc.Process(file, dryRun, del); err != nil {
-			internal.LogError("could not process %s: %v", file, err)
+			slog.Error("could not process", "file", file, "error", err)
 		}
 	}
 
 	if dir != "" {
 		internal.Walk(dir, func(path string, info os.FileInfo) {
 			if err := hevc.Process(path, dryRun, del); err != nil {
-				internal.LogError("could not process %s: %v", path, err)
+				slog.Error("could not process", "file", path, "error", err)
 			}
 		})
 	}

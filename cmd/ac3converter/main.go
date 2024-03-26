@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"github.com/hranicka/mediatool/internal/ac3"
+	"log/slog"
 	"os"
 
 	"github.com/hranicka/mediatool/internal"
@@ -10,7 +11,7 @@ import (
 
 func main() {
 	// parse cli args
-	flag.BoolVar(&internal.Verbose, "v", false, "verbose/debug output")
+	verbose := flag.Bool("v", false, "verbose/debug output")
 	flag.StringVar(&internal.FFmpegPath, "ffmpeg", "ffmpeg", "ffmpeg path")
 
 	var file string
@@ -29,6 +30,10 @@ func main() {
 
 	flag.Parse()
 
+	if *verbose {
+		slog.SetLogLoggerLevel(slog.LevelDebug)
+	}
+
 	// validate
 	if (file == "" && dir == "") || (file != "" && dir != "") {
 		flag.PrintDefaults()
@@ -37,19 +42,19 @@ func main() {
 
 	// run
 	if dryRun {
-		internal.LogDebug("DRY RUN")
+		slog.Info("DRY RUN")
 	}
 
 	if file != "" {
 		if err := ac3.Process(file, lang, minBitRate, dryRun, del); err != nil {
-			internal.LogError("could not process %s: %v", file, err)
+			slog.Error("could not process", "file", file, "error", err)
 		}
 	}
 
 	if dir != "" {
 		internal.Walk(dir, func(path string, info os.FileInfo) {
 			if err := ac3.Process(path, lang, minBitRate, dryRun, del); err != nil {
-				internal.LogError("could not process %s: %v", path, err)
+				slog.Error("could not process", "file", path, "error", err)
 			}
 		})
 	}
