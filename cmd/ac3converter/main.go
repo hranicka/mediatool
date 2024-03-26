@@ -55,7 +55,12 @@ func main() {
 	}
 
 	if dir != "" {
-		internal.Walk(dir, strings.Split(ignore, ","), func(path string, info os.FileInfo) {
+		ignores := internal.FileIgnoresWhenExist(dir + "/.ac3converter-ignore")
+		if ignore != "" {
+			ignores = append(ignores, strings.Split(ignore, ",")...)
+		}
+
+		internal.Walk(dir, ignores, func(path string, info os.FileInfo) {
 			if err := ac3.Process(path, lang, minBitRate, dryRun, del); err != nil {
 				slog.Error("could not process", "file", path, "error", err)
 			}

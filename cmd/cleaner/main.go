@@ -50,7 +50,12 @@ func main() {
 	}
 
 	if dir != "" {
-		internal.Walk(dir, strings.Split(ignore, ","), func(path string, info os.FileInfo) {
+		ignores := internal.FileIgnoresWhenExist(dir + "/.cleaner-ignore")
+		if ignore != "" {
+			ignores = append(ignores, strings.Split(ignore, ",")...)
+		}
+
+		internal.Walk(dir, ignores, func(path string, info os.FileInfo) {
 			if err := cleaner.Process(path, dryRun, del); err != nil {
 				slog.Error("could not process", "file", path, "error", err)
 			}
