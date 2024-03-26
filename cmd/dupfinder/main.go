@@ -30,7 +30,7 @@ func main() {
 		return
 	}
 
-	internal.Walk(dir, func(path string, info os.FileInfo) {
+	internal.Walk(dir, []string{}, func(path string, info os.FileInfo) {
 		slog.Debug("opening file", "path", path)
 
 		f, err := internal.Probe(path)

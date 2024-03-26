@@ -5,6 +5,7 @@ import (
 	"github.com/hranicka/mediatool/internal/ac3"
 	"log/slog"
 	"os"
+	"strings"
 
 	"github.com/hranicka/mediatool/internal"
 )
@@ -18,10 +19,12 @@ func main() {
 	var dir string
 	var del bool
 	var dryRun bool
+	var ignore string
 	flag.StringVar(&file, "file", "", "source file path (cannot be combined with -dir)")
 	flag.StringVar(&dir, "dir", "", "source files directory (cannot be combined with -file)")
 	flag.BoolVar(&del, "del", false, "delete source files after successful conversion")
 	flag.BoolVar(&dryRun, "dry", false, "run in dry mode = without actual conversion")
+	flag.StringVar(&ignore, "ignore", "", "comma separated list of substrings to ignore")
 
 	var minBitRate int
 	var lang string
@@ -52,7 +55,7 @@ func main() {
 	}
 
 	if dir != "" {
-		internal.Walk(dir, func(path string, info os.FileInfo) {
+		internal.Walk(dir, strings.Split(ignore, ","), func(path string, info os.FileInfo) {
 			if err := ac3.Process(path, lang, minBitRate, dryRun, del); err != nil {
 				slog.Error("could not process", "file", path, "error", err)
 			}
