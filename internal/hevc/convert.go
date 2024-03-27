@@ -6,6 +6,7 @@ import (
 	"github.com/hranicka/mediatool/internal"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -25,6 +26,14 @@ var (
 func Process(src string, dryRun bool, del bool) error {
 	// read file streams
 	slog.Debug("opening file", "path", src)
+
+	// check file format
+	extension := strings.ToLower(filepath.Ext(src))
+	if extension != ".mkv" && extension != ".mp4" {
+		return fmt.Errorf("unsupported file format: %s", src)
+	}
+
+	// probe file
 	f, err := internal.Probe(src)
 	if err != nil {
 		return fmt.Errorf("cannot get file info: %v", err)
@@ -79,7 +88,7 @@ func Process(src string, dryRun bool, del bool) error {
 		slog.Info("converting tracks", "file", src, "cnt", len(toConvert), "streams", toConvert)
 
 		if !dryRun {
-			dst := src + ".tmp.mkv" // TODO Validate original extension
+			dst := src + ".tmp" + extension
 			if err := convert(src, dst, toConvert); err != nil {
 				return fmt.Errorf("cannot convert file: %v", err)
 			}

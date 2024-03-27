@@ -11,7 +11,7 @@ import (
 )
 
 var (
-	filePattern = regexp.MustCompile(`(?i)\.mkv$`)
+	filePattern = regexp.MustCompile(`(?i)\.(mkv|mp4)$`)
 )
 
 func FileIgnoresWhenExist(path string) []string {
