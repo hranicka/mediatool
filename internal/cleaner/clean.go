@@ -114,7 +114,7 @@ func cleanup(src string, dst string, streams []internal.Stream) error {
 	// preserve just video, audio and subtitles
 	args = append(args, "-map", "0:v")
 	args = append(args, "-map", "0:a")
-	args = append(args, "-map", "0:s")
+	args = append(args, "-map", "0:s?")
 
 	for _, s := range streams {
 		var t string
