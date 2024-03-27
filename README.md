@@ -7,7 +7,7 @@ in DTS, TrueHD or E-AC3 codecs. If such a file does not contain AC3 stream
 of the same language (except commentary tracks), file is being converted
 and AC3 track is appended in the file.
 
-# hevcconverter
+## hevcconverter
 
 Application searches for MKV (Matroska) or MP4 files which contain video streams
 in H.264 codec. If such a file does not contain HEVC stream, file is being
@@ -17,7 +17,7 @@ converted and HEVC track replaces the original one.
 
 Application searches for duplicated audio tracks in MKV (Matroska) or MP4 files.
 
-# cleaner
+## cleaner
 
 Application searches for MKV (Matroska) or MP4 files which contain streams
 without whitelisted language. Such streams are being removed from the file.
@@ -40,4 +40,5 @@ make
 ./dist/ac3converter -help
 ./dist/hevcconverter -help
 ./dist/dupfinder -help
+./dist/cleaner -help
 ```
