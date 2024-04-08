@@ -21,6 +21,7 @@ var (
 	EncQualityPercent = 0.6
 	EncQualityPreset  = 20
 	EncQualityType    = EncQualityTypeAuto
+	EncBitrate        = 0
 )
 
 func Process(src string, dryRun bool, del bool) error {
@@ -124,7 +125,9 @@ func convert(src string, dst string, streams []internal.Stream) error {
 		args = append(args, fmt.Sprintf("-c:v:%d", s.TypeIndex), "hevc_vaapi")
 
 		br, _ := strconv.Atoi(s.BitRate)
-		if EncQualityType == EncQualityTypeAuto && br > 0 {
+		if EncBitrate > 0 {
+			args = append(args, fmt.Sprintf("-b:v:%d", s.TypeIndex), fmt.Sprintf("%dk", EncBitrate))
+		} else if EncQualityType == EncQualityTypeAuto && br > 0 {
 			args = append(args, fmt.Sprintf("-b:v:%d", s.TypeIndex), fmt.Sprintf("%.0fk", (float64(br)/1024)*EncQualityPercent))
 		} else {
 			args = append(args, "-qp", fmt.Sprintf("%d", EncQualityPreset))

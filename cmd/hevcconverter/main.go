@@ -18,6 +18,7 @@ func main() {
 	flag.Float64Var(&hevc.EncQualityPercent, "quality_percent", 0.6, "percentage bitrate quality according to source")
 	flag.IntVar(&hevc.EncQualityPreset, "quality_preset", 20, "static quality preset (qp) passed to ffmpeg")
 	flag.StringVar(&hevc.EncQualityType, "quality_type", hevc.EncQualityTypeAuto, "encoding quality type (auto/qp)")
+	flag.IntVar(&hevc.EncBitrate, "bitrate", 0, "encoding quality bitrate (kbps)")
 
 	var file string
 	var dir string
