@@ -7,11 +7,12 @@ package clean
 import (
 	"flag"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/hranicka/mediatool/internal/backup"
 	"github.com/hranicka/mediatool/internal/cli"
@@ -20,6 +21,7 @@ import (
 	"github.com/hranicka/mediatool/internal/media"
 	"github.com/hranicka/mediatool/internal/probe"
 	"github.com/hranicka/mediatool/internal/run"
+	"github.com/hranicka/mediatool/internal/ui"
 	"github.com/hranicka/mediatool/internal/walk"
 )
 
@@ -30,6 +32,7 @@ type Config struct {
 	PurgeSole bool
 	Ignores   []string
 	DryRun    bool
+	Verbose   bool
 }
 
 type tool struct {
@@ -39,10 +42,20 @@ type tool struct {
 	cfg        *Config
 	whitelist  []string
 	ignores    ignore.List
-	out        io.Writer
+	rep        *ui.Reporter
 	guard      *run.TmpGuard
 
 	cleaned, untouched, failed int
+	bytesIn, bytesOut          int64
+	failures                   []ui.Failure
+}
+
+// fail renders the standard "Error: ..." line and records the failure for
+// the summary.
+func (t *tool) fail(path, msg string) {
+	t.rep.Fail(msg, "")
+	t.failures = append(t.failures, ui.Failure{Path: path, Msg: msg})
+	t.failed++
 }
 
 // Run executes the clean subcommand.
@@ -61,6 +74,7 @@ func Run(args []string) error {
 	if verbose {
 		slog.SetLogLoggerLevel(slog.LevelDebug)
 	}
+	cfg.Verbose = verbose
 	if fs.NArg() != 1 {
 		fmt.Fprintln(os.Stderr, "usage: mediatool clean [flags] <directory|file>")
 		return fmt.Errorf("clean needs exactly one directory or file argument")
@@ -77,8 +91,9 @@ func Run(args []string) error {
 	}
 
 	ignores, warnings := ignore.Load(cli.IgnoresDir(target), "clean", cfg.Ignores)
+	rep := ui.New(os.Stdout, ui.Detect(os.Stdout, os.Stderr))
 	for _, w := range warnings {
-		fmt.Fprintln(os.Stdout, "warning:", w)
+		rep.Raw(ui.WarnTone, "warning: %s\n", w)
 	}
 
 	t := &tool{
@@ -88,7 +103,7 @@ func Run(args []string) error {
 		cfg:        &cfg,
 		whitelist:  media.ExpandWhitelist(strings.Split(cfg.Langs, ",")),
 		ignores:    ignores,
-		out:        os.Stdout,
+		rep:        rep,
 		guard:      run.NewTmpGuard(),
 	}
 	return t.runAll()
@@ -121,15 +136,18 @@ func (t *tool) runAll() error {
 	if t.cfg.PurgeSole {
 		soleNote = "purged too (-e)"
 	}
-	fmt.Fprintf(t.out, "FFmpeg binary : %s\n", t.ffmpegBin)
-	fmt.Fprintf(t.out, "Keep languages: %s (+ no/und tags)\n", strings.Join(t.whitelist, " "))
-	fmt.Fprintf(t.out, "Sole tracks   : %s\n", soleNote)
-	fmt.Fprintf(t.out, "Ignore entries: %d\n", t.ignores.Len())
-	if t.cfg.DryRun {
-		fmt.Fprintf(t.out, "Extra         : DRY RUN\n")
+	kvs := []ui.KV{
+		ui.Pair("FFmpeg binary", t.ffmpegBin),
+		ui.Pair("Keep languages", strings.Join(t.whitelist, " ")+" (+ no/und tags)"),
+		ui.Pair("Sole tracks", soleNote),
+		ui.Pair("Ignore entries", strconv.Itoa(t.ignores.Len())),
 	}
-	fmt.Fprintln(t.out, "==========================================")
+	if t.cfg.DryRun {
+		kvs = append(kvs, ui.Pair("Extra", "DRY RUN"))
+	}
+	t.rep.Header(kvs)
 
+	start := time.Now()
 	target := t.cfg.Target
 	info, err := os.Stat(target)
 	if err != nil {
@@ -140,29 +158,37 @@ func (t *tool) runAll() error {
 		if err != nil {
 			return err
 		}
-		for _, path := range files {
+		t.rep.Found(len(files))
+		for i, path := range files {
 			if t.ignores.Match(path) {
-				fmt.Fprintf(t.out, "Skipping (ignored): %s\n", path)
+				t.rep.Skip(i+1, len(files), path, "ignored")
 				continue
 			}
-			t.processFile(path)
+			t.processFile(i+1, len(files), path)
 		}
 	} else if t.ignores.Match(target) {
-		fmt.Fprintf(t.out, "Skipping (ignored): %s\n", target)
+		t.rep.Skip(1, 1, target, "ignored")
 	} else {
-		t.processFile(target)
+		t.processFile(1, 1, target)
 	}
 
-	fmt.Fprintln(t.out, "==========================================")
-	fmt.Fprintf(t.out, "Done. Cleaned: %d, untouched: %d, failed: %d.\n", t.cleaned, t.untouched, t.failed)
+	t.rep.Summary("Done.", "Cleaned", "untouched", ui.Outcome{
+		Done:     t.cleaned,
+		Skipped:  t.untouched,
+		Failed:   t.failed,
+		BytesIn:  t.bytesIn,
+		BytesOut: t.bytesOut,
+		Failures: t.failures,
+		Elapsed:  time.Since(start),
+	})
 	if t.failed > 0 {
 		return fmt.Errorf("%d file(s) failed", t.failed)
 	}
 	return nil
 }
 
-func (t *tool) skip(format string, args ...any) {
-	fmt.Fprintf(t.out, "Skipping ("+format+"): %s\n", args...)
+func (t *tool) skip(i, n int, path, reason string) {
+	t.rep.Skip(i, n, path, reason)
 	t.untouched++
 }
 
@@ -213,17 +239,16 @@ func PlanTracks(info *probe.Info, whitelist []string, purgeSole bool) TrackPlan 
 	return plan
 }
 
-func (t *tool) processFile(path string) {
+func (t *tool) processFile(i, n int, path string) {
 	info, err := probe.Probe(t.r, t.ffprobeBin, path)
 	if err != nil {
-		fmt.Fprintf(t.out, "Skipping (cannot probe: %v): %s\n", err, path)
-		t.untouched++
+		t.skip(i, n, path, fmt.Sprintf("cannot probe: %v", err))
 		return
 	}
 
 	src := countStreams(info)
 	if src.video == 0 {
-		t.skip("no real video stream", path)
+		t.skip(i, n, path, "no real video stream")
 		return
 	}
 
@@ -247,7 +272,7 @@ func (t *tool) processFile(path string) {
 	keep := counts{video: src.video, audio: trackPlan.KeptAudio, subtitle: trackPlan.KeptSubs}
 
 	if len(removeArgs) == 0 {
-		fmt.Fprintf(t.out, "OK (nothing to remove): %s\n", path)
+		t.rep.OK(i, n, path, "nothing to remove")
 		t.untouched++
 		return
 	}
@@ -261,18 +286,17 @@ func (t *tool) processFile(path string) {
 	}
 
 	if t.cfg.DryRun {
-		fmt.Fprintf(t.out, "Would clean: %s (%s)\n", path, media.HumanBytes(srcSize))
-		for _, line := range plan {
-			fmt.Fprintf(t.out, "  - %s\n", line)
-		}
+		t.rep.Would("Would clean", i, n, path, media.HumanBytes(srcSize), plan...)
 		t.cleaned++
 		return
 	}
 
-	fmt.Fprintf(t.out, "Cleaning: %s (%s)\n", path, media.HumanBytes(srcSize))
-	for _, line := range plan {
-		fmt.Fprintf(t.out, "  - %s\n", line)
+	srcDur := time.Duration(0)
+	if d, ok := info.Duration(); ok {
+		srcDur = time.Duration(d * float64(time.Second))
 	}
+	fileStart := time.Now()
+	t.rep.Start("Cleaning", i, n, path, media.HumanBytes(srcSize), srcDur, plan...)
 
 	var fmtName string
 	switch strings.ToLower(filepath.Ext(path)) {
@@ -295,9 +319,12 @@ func (t *tool) processFile(path string) {
 		"-map", "0:v", "-map", "0:a?", "-map", "0:s?"}
 	args = append(args, removeArgs...)
 	args = append(args, "-c", "copy", "-map_metadata:g", "0:g", "-max_muxing_queue_size", "4096", "-f", fmtName, tmp)
-	if _, err := t.r.Stream(t.ffmpegBin, args...); err != nil {
-		fmt.Fprintf(t.out, "Error: failed to clean %s (left untouched)\n", path)
-		t.failed++
+	var onStats func(elapsed time.Duration, speed string)
+	if t.rep.Interactive() && !t.cfg.Verbose {
+		onStats = t.rep.Progress
+	}
+	if _, err := run.StreamProgress(t.r, t.ffmpegBin, onStats, args...); err != nil {
+		t.fail(path, fmt.Sprintf("failed to clean %s (left untouched)", path))
 		return
 	}
 
@@ -310,11 +337,12 @@ func (t *tool) processFile(path string) {
 		newSize = st.Size()
 	}
 	if _, err := backup.Swap(path, tmp); err != nil {
-		fmt.Fprintf(t.out, "Error: %v\n", err)
-		t.failed++
+		t.fail(path, err.Error())
 		return
 	}
-	fmt.Fprintf(t.out, "Cleaned: %s (%s -> %s, backup: %s.old)\n", path, media.HumanBytes(srcSize), media.HumanBytes(newSize), path)
+	t.rep.Success("Cleaned", path, srcSize, newSize, true, time.Since(fileStart))
+	t.bytesIn += srcSize
+	t.bytesOut += newSize
 	t.cleaned++
 }
 
@@ -323,33 +351,28 @@ func (t *tool) processFile(path string) {
 func (t *tool) gatesPass(path, tmp string, info *probe.Info, srcSize int64, keep counts) bool {
 	newInfo, err := probe.Probe(t.r, t.ffprobeBin, tmp)
 	if err != nil {
-		fmt.Fprintf(t.out, "Error: cannot probe the output: %v\n", err)
-		t.failed++
+		t.fail(path, fmt.Sprintf("cannot probe the output: %v", err))
 		return false
 	}
 	if srcDur, ok1 := info.Duration(); ok1 {
 		if newDur, ok2 := newInfo.Duration(); ok2 && !gates.DurationKept(newDur, srcDur, 0.99) {
-			fmt.Fprintf(t.out, "Error: output (%.3fs) is much shorter than source (%.3fs) - keeping original\n", newDur, srcDur)
-			t.failed++
+			t.fail(path, fmt.Sprintf("output (%.3fs) is much shorter than source (%.3fs) - keeping original", newDur, srcDur))
 			return false
 		}
 	}
 	st, err := os.Stat(tmp)
 	if err != nil {
-		fmt.Fprintf(t.out, "Error: output is missing: %v\n", err)
-		t.failed++
+		t.fail(path, fmt.Sprintf("output is missing: %v", err))
 		return false
 	}
 	if !gates.Shrunk(st.Size(), srcSize) {
-		fmt.Fprintf(t.out, "Error: output is not smaller (%s -> %s) - keeping original\n", media.HumanBytes(srcSize), media.HumanBytes(st.Size()))
-		t.failed++
+		t.fail(path, fmt.Sprintf("output is not smaller (%s -> %s) - keeping original", media.HumanBytes(srcSize), media.HumanBytes(st.Size())))
 		return false
 	}
 	newCounts := countStreams(newInfo)
 	if newCounts != keep {
-		fmt.Fprintf(t.out, "Error: output streams (video %d, audio %d, subs %d) do not match the plan (video %d, audio %d, subs %d) - keeping original\n",
-			newCounts.video, newCounts.audio, newCounts.subtitle, keep.video, keep.audio, keep.subtitle)
-		t.failed++
+		t.fail(path, fmt.Sprintf("output streams (video %d, audio %d, subs %d) do not match the plan (video %d, audio %d, subs %d) - keeping original",
+			newCounts.video, newCounts.audio, newCounts.subtitle, keep.video, keep.audio, keep.subtitle))
 		return false
 	}
 	return true

@@ -166,6 +166,18 @@ func (r *Reporter) Notice(i, n int, path, msg string) {
 	fmt.Fprintln(r.out, r.pal.Warn(line))
 }
 
+// OK reports a file needing no action: "OK (<msg>): <path>" plain, a dim
+// skip-shaped line pretty.
+func (r *Reporter) OK(i, n int, path, msg string) {
+	r.close()
+	if !r.p.Interactive {
+		fmt.Fprintf(r.out, "OK (%s): %s\n", msg, path)
+		return
+	}
+	line := fmt.Sprintf("%s %s%s %s %s", r.sym.Skip, idx(i, n), path, r.dash(), msg)
+	fmt.Fprintln(r.out, r.pal.Dim(line))
+}
+
 // Would reports a dry-run action: "<verb>: <path> (<summary>)" plain,
 // cyan with a plan marker pretty. Details render as indented sub-lines.
 func (r *Reporter) Would(verb string, i, n int, path, summary string, details ...string) {

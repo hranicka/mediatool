@@ -11,6 +11,7 @@ import (
 	"github.com/hranicka/mediatool/internal/ignore"
 	"github.com/hranicka/mediatool/internal/media"
 	"github.com/hranicka/mediatool/internal/run"
+	"github.com/hranicka/mediatool/internal/ui"
 )
 
 // fakeFF fakes both binaries; see convert_test.go for the pattern.
@@ -102,7 +103,7 @@ func newTestTool(t *testing.T, dir string, ff run.Runner, cfg *Config, out *byte
 		cfg:        cfg,
 		whitelist:  mediaWhitelist(cfg.Langs),
 		ignores:    mustIgnore(dir, "clean", cfg.Ignores),
-		out:        out,
+		rep:        ui.New(out, ui.Profile{}),
 		guard:      &run.TmpGuard{},
 	}
 }
@@ -150,7 +151,7 @@ func TestCleanHappyPath(t *testing.T) {
 	}, remuxSize: 500_000}
 	out := &bytes.Buffer{}
 	tl := newTestTool(t, dir, ff, &Config{Target: dir, Langs: "cs,en"}, out)
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 
 	if tl.cleaned != 1 || tl.failed != 0 {
 		t.Fatalf("counters: cleaned=%d failed=%d out=%s", tl.cleaned, tl.failed, out.String())
@@ -180,7 +181,7 @@ func TestCleanDryRunPlan(t *testing.T) {
 	ff := &fakeFF{probeFor: func(string) (string, bool) { return libraryJSON(), true }}
 	out := &bytes.Buffer{}
 	tl := newTestTool(t, dir, ff, &Config{Target: dir, Langs: "cs,en", DryRun: true}, out)
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 
 	if tl.cleaned != 1 || len(ff.remuxLog) != 0 {
 		t.Fatalf("dry run must not remux: %+v", tl)
@@ -211,7 +212,7 @@ func TestCleanSoleTrackRule(t *testing.T) {
 	ff := &fakeFF{probeFor: func(string) (string, bool) { return soloJSON, true }}
 	out := &bytes.Buffer{}
 	tl := newTestTool(t, dir, ff, &Config{Target: dir, Langs: "cs,en"}, out)
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 	if tl.untouched != 1 || len(ff.remuxLog) != 0 {
 		t.Errorf("sole tracks must be kept: %+v out=%s", tl, out.String())
 	}
@@ -227,7 +228,7 @@ func TestCleanSoleTrackRule(t *testing.T) {
 		return soloJSON, true
 	}, remuxSize: 1}
 	tl2 := newTestTool(t, dir, ff2, &Config{Target: dir, Langs: "cs,en", PurgeSole: true}, out)
-	tl2.processFile(src)
+	tl2.processFile(1, 1, src)
 	if tl2.cleaned != 1 {
 		t.Errorf("purge must remove sole tracks: %+v", tl2)
 	}
@@ -247,7 +248,7 @@ func TestCleanNoVideo(t *testing.T) {
 	ff := &fakeFF{probeFor: func(string) (string, bool) { return audioOnly, true }}
 	out := &bytes.Buffer{}
 	tl := newTestTool(t, dir, ff, &Config{Target: dir, Langs: "cs,en"}, out)
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 
 	if tl.untouched != 1 || !strings.Contains(out.String(), "no real video stream") {
 		t.Errorf("audio-only file must be skipped: %+v out=%s", tl, out.String())
@@ -268,7 +269,7 @@ func TestCleanCountGate(t *testing.T) {
 	}, remuxSize: 1}
 	out := &bytes.Buffer{}
 	tl := newTestTool(t, dir, ff, &Config{Target: dir, Langs: "cs,en"}, out)
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 
 	if tl.failed != 1 {
 		t.Errorf("count mismatch must fail: %+v out=%s", tl, out.String())
@@ -291,7 +292,7 @@ func TestCleanSizeGate(t *testing.T) {
 	}, remuxSize: 2_000_000} // grows: rejected
 	out := &bytes.Buffer{}
 	tl := newTestTool(t, dir, ff, &Config{Target: dir, Langs: "cs,en"}, out)
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 
 	if tl.failed != 1 || !strings.Contains(out.String(), "not smaller") {
 		t.Errorf("growing output must fail: %+v out=%s", tl, out.String())
@@ -309,7 +310,7 @@ func TestCleanMP4Untagged(t *testing.T) {
 	ff := &fakeFF{probeFor: func(string) (string, bool) { return mp4JSON, true }}
 	out := &bytes.Buffer{}
 	tl := newTestTool(t, dir, ff, &Config{Target: dir, Langs: "cs,en"}, out)
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 
 	// untagged MP4 audio counts as kept - nothing to remove
 	if tl.untouched != 1 || !strings.Contains(out.String(), "OK (nothing to remove)") {
