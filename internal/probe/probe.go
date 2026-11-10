@@ -41,6 +41,7 @@ type Stream struct {
 	Width          int         `json:"width"`
 	Height         int         `json:"height"`
 	Channels       int         `json:"channels"`
+	SampleRate     string      `json:"sample_rate"`
 	BitRate        string      `json:"bit_rate"`
 	RFrameRate     string      `json:"r_frame_rate"`
 	ColorPrimaries string      `json:"color_primaries"`
@@ -51,10 +52,20 @@ type Stream struct {
 	SideDataList   []SideData  `json:"side_data_list"`
 }
 
+// BitRateInt returns the stream bitrate as a number (0 when ffprobe omits
+// it, which is common for VBR tracks in Matroska).
+func (s Stream) BitRateInt() int {
+	n, _ := strconv.Atoi(s.BitRate)
+	return n
+}
+
 type Format struct {
-	Duration string `json:"duration"`
-	Size     string `json:"size"`
-	BitRate  string `json:"bit_rate"`
+	// FormatName is the ffprobe container name list (e.g. "matroska,webm",
+	// "mov,mp4,m4a,3gp,3g2,mj2").
+	FormatName string `json:"format_name"`
+	Duration   string `json:"duration"`
+	Size       string `json:"size"`
+	BitRate    string `json:"bit_rate"`
 }
 
 // Info is the parsed ffprobe output of one file.
@@ -75,13 +86,13 @@ type Typed struct {
 func Probe(r run.Runner, ffprobeBin, src string) (*Info, error) {
 	out, err := r.Output(ffprobeBin, "-v", "error", "-print_format", "json", "-show_format", "-show_streams", src)
 	if err != nil {
-		return nil, fmt.Errorf("cannot open file: %v", err)
+		return nil, fmt.Errorf("cannot open file: %w", err)
 	}
 	slog.Debug("probed file", "src", src, "output", string(out))
 
 	info := &Info{}
 	if err := json.Unmarshal(out, info); err != nil {
-		return nil, fmt.Errorf("cannot parse ffprobe output: %v", err)
+		return nil, fmt.Errorf("cannot parse ffprobe output: %w", err)
 	}
 	return info, nil
 }
@@ -108,10 +119,11 @@ func (i *Info) Size() (int64, bool) {
 	return s, err == nil
 }
 
-// IsDolbyVision reports whether any video stream carries a DOVI
-// configuration record (the DV layer cannot survive a re-encode).
+// IsDolbyVision reports whether any video stream carries a DOVI side-data
+// record (the DV layer cannot survive a re-encode). Matched by the "DOVI"
+// prefix to stay robust across ffprobe version wording.
 func (i *Info) IsDolbyVision() bool {
-	return i.videoSideDataContains("DOVI configuration record")
+	return i.videoSideDataContains("DOVI")
 }
 
 // IsHDR10Plus reports whether any video stream carries HDR10+ dynamic

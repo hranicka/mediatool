@@ -32,14 +32,15 @@ func ExpandWhitelist(langs []string) []string {
 }
 
 // LangKept reports whether a stream's language tag passes the whitelist
-// (case-insensitive; missing/und/unknown tags always count as kept).
+// (case-insensitive on both sides; missing/und/unknown tags always count
+// as kept).
 func LangKept(tag string, whitelist []string) bool {
 	tag = strings.ToLower(tag)
 	if untagged[tag] {
 		return true
 	}
 	for _, w := range whitelist {
-		if tag == w {
+		if tag == strings.ToLower(w) {
 			return true
 		}
 	}

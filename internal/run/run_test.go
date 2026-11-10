@@ -40,12 +40,15 @@ func TestCmdStream(t *testing.T) {
 func TestLocateEnvOverride(t *testing.T) {
 	dir := t.TempDir()
 	fb := filepath.Join(dir, "ffmpeg")
-	if err := os.WriteFile(fb, []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatal(err)
+	pb := filepath.Join(dir, "ffprobe")
+	for _, p := range []string{fb, pb} {
+		if err := os.WriteFile(p, []byte("#!/bin/sh\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
 	t.Setenv("FFMPEG_BIN", fb)
 
-	// without FFPROBE_BIN and without a sibling, ffprobe falls back to PATH
+	// without FFPROBE_BIN, the sibling ffprobe of the chosen ffmpeg wins
 	ffmpeg, ffprobe, err := Locate()
 	if err != nil {
 		t.Fatalf("Locate: %v", err)
@@ -53,8 +56,8 @@ func TestLocateEnvOverride(t *testing.T) {
 	if ffmpeg != fb {
 		t.Errorf("ffmpeg: got %s, want %s", ffmpeg, fb)
 	}
-	if ffprobe != "ffprobe" {
-		t.Errorf("ffprobe: got %s, want PATH fallback", ffprobe)
+	if ffprobe != pb {
+		t.Errorf("ffprobe: got %s, want sibling %s", ffprobe, pb)
 	}
 }
 

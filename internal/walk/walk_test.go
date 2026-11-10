@@ -51,3 +51,27 @@ func TestMediaMissingDir(t *testing.T) {
 		t.Fatal("expected error for missing directory")
 	}
 }
+
+func TestMediaSkipsUnreadableSubdir(t *testing.T) {
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "locked")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	okFile := filepath.Join(dir, "ok.mkv")
+	if err := os.WriteFile(okFile, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(sub, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(sub, 0o755) })
+
+	got, err := Media(dir)
+	if err != nil {
+		t.Fatalf("unreadable subdirectory must not abort the scan: %v", err)
+	}
+	if len(got) != 1 || got[0] != okFile {
+		t.Errorf("got %v, want [%s]", got, okFile)
+	}
+}

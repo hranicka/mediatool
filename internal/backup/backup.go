@@ -15,13 +15,13 @@ func Swap(src, newFile string) (string, error) {
 		return "", fmt.Errorf("backup %s already exists", old)
 	}
 	if err := os.Rename(src, old); err != nil {
-		return "", fmt.Errorf("cannot rename source file: %v", err)
+		return "", fmt.Errorf("cannot rename source file: %w", err)
 	}
 	if err := os.Rename(newFile, src); err != nil {
 		if rbErr := os.Rename(old, src); rbErr != nil {
-			return "", fmt.Errorf("cannot rename converted file: %v (rollback also failed: %v - original preserved as %s)", err, rbErr, old)
+			return "", fmt.Errorf("cannot rename converted file: %w (rollback also failed: %v - original preserved as %s)", err, rbErr, old)
 		}
-		return "", fmt.Errorf("cannot rename converted file: %v", err)
+		return "", fmt.Errorf("cannot rename converted file: %w", err)
 	}
 	return old, nil
 }

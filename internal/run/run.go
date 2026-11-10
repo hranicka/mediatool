@@ -34,7 +34,7 @@ func (Cmd) Output(name string, args ...string) ([]byte, error) {
 	cmd.Stdout = &out
 	cmd.Stderr = &errBuf
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("%v: %s", err, errBuf.String())
+		return nil, fmt.Errorf("%w: %s", err, errBuf.String())
 	}
 	return out.Bytes(), nil
 }
@@ -45,7 +45,7 @@ func (Cmd) Stream(name string, args ...string) ([]byte, error) {
 	cmd.Stdout = io.Discard
 	cmd.Stderr = io.MultiWriter(os.Stderr, &errBuf)
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("%v: %s", err, errBuf.String())
+		return nil, fmt.Errorf("%w: %s", err, errBuf.String())
 	}
 	return errBuf.Bytes(), nil
 }
@@ -77,15 +77,21 @@ func Locate() (ffmpeg, ffprobe string, err error) {
 	}
 
 	if p := os.Getenv("FFPROBE_BIN"); p != "" {
+		if info, statErr := os.Stat(p); statErr != nil || info.IsDir() {
+			return "", "", fmt.Errorf("FFPROBE_BIN=%s is not an executable file", p)
+		}
 		ffprobe = p
 	} else if dir := filepath.Dir(ffmpeg); strings.ContainsRune(ffmpeg, os.PathSeparator) && dir != "." {
-		sibling := filepath.Join(dir, "ffprobe")
-		if _, statErr := os.Stat(sibling); statErr == nil {
+		if sibling, ok := lookPath(filepath.Join(dir, "ffprobe")); ok {
 			ffprobe = sibling
 		}
 	}
 	if ffprobe == "" {
-		ffprobe = "ffprobe"
+		if p, err := exec.LookPath("ffprobe"); err == nil {
+			ffprobe = p
+		} else {
+			return "", "", errors.New("ffprobe not found (neither next to ffmpeg nor on PATH); set FFPROBE_BIN")
+		}
 	}
 	return ffmpeg, ffprobe, nil
 }
