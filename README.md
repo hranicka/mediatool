@@ -166,6 +166,23 @@ the search starts at the file's directory), so an ignore file in `/foo` or
   stream-count checks.
 - **Dry run**: every modifying command accepts `-n` and prints its plan.
 
+## Output & colors
+
+When stdout and stderr are both terminals, the output renders for humans:
+a settings header, one line per file with a status symbol (green ✓
+processed, dim – skipped, red ✗ failed, yellow ⚠ notices), `[i/n]`
+position markers, a per-file progress bar driven by ffmpeg's own
+`time=`/`speed=` stats (convert, clean, ac3, enhance), failure lines with
+the captured ffmpeg error tail, and a closing summary with size
+aggregates, the failure list and elapsed time. The enhance engine
+download shows a byte progress bar.
+
+Piped or redirected output stays plain — line-for-line identical to the
+earlier releases — so scripts and greps keep working. Color control
+follows the usual conventions: `NO_COLOR` disables colors, `CLICOLOR_FORCE=1`
+forces them, `TERM=dumb` disables them. `-v` swaps the progress bar for
+ffmpeg's raw stats passthrough.
+
 ## Requirements
 
 - ffmpeg / ffprobe (`FFMPEG_BIN`/`FFPROBE_BIN` env overrides, else

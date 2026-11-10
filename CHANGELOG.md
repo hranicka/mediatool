@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+- **Interactive terminal output** — when stdout and stderr are terminals,
+  every command renders for humans: colored status symbols per file
+  (✓ processed, – skipped, ✗ failed, ⚠ notices), `[i/n]` position
+  markers, a per-file progress bar driven by ffmpeg `time=`/`speed=`
+  stats (convert/clean/ac3/enhance), failure lines with the captured
+  ffmpeg error tail, a first-run engine-download progress bar (enhance)
+  and an end-of-run summary with size aggregates, the failure list and
+  elapsed time. Piped or redirected output is byte-identical to the
+  previous plain rendering (pinned by a golden test), so automation is
+  unaffected. `NO_COLOR`, `CLICOLOR_FORCE` and `TERM=dumb` are honored;
+  `-v` keeps the raw ffmpeg stats passthrough instead of the bar.
+- Interrupting a run (Ctrl-C) prints `interrupted; cleaning up temp
+  files` before exiting 130 instead of dying silently.
+
 ## 2.0.1
 
 - **Fixed: HDR detection never fired on real files** — the ffprobe parser
