@@ -138,11 +138,77 @@ func (t *tool) runAll() error {
 	return nil
 }
 
-// plan holds one to-be-appended AC3 track: the audio ordinal and language.
-type plan struct {
-	ordinal int
-	lang    string
-	codec   string
+// PlanEntry is one DTS/TrueHD/FLAC audio track that needs an appended AC3
+// compatibility copy: the per-type audio ordinal (ffmpeg's :N specifier),
+// its language tag and its source codec.
+type PlanEntry struct {
+	Ordinal int
+	Lang    string
+	Codec   string
+}
+
+// PlanCompat classifies a probed file's audio tracks with the ac3
+// command's rules: an existing AC3 track marks a language valid unless it
+// is a commentary or below minBR (bit/s; a bitrate-less AC3 with fewer
+// than 6 channels never counts). Returns one entry per DTS/TrueHD/FLAC
+// language without a valid same-language AC3, ordered by language for a
+// deterministic plan. Used by the ac3 command and by convert's `ac3`
+// audio target.
+func PlanCompat(info *probe.Info, minBR int) []PlanEntry {
+	valid := map[string]bool{}
+	bad := map[string]PlanEntry{}
+	for _, ta := range info.ByType()[probe.TypeAudio] {
+		lang := strings.ToLower(ta.Stream.Tags.Language)
+		switch ta.Stream.CodecName {
+		case "ac3":
+			if media.Commentary(ta.Stream.Tags.Title) {
+				continue
+			}
+			br := ta.Stream.BitRateInt()
+			if br > 0 && br < minBR {
+				continue
+			}
+			if br == 0 && ta.Stream.Channels < 6 {
+				continue
+			}
+			valid[lang] = true
+		case "dts", "truehd", "flac":
+			if _, ok := bad[lang]; !ok {
+				bad[lang] = PlanEntry{Ordinal: ta.Ordinal, Lang: lang, Codec: ta.Stream.CodecName}
+			}
+		}
+	}
+
+	langs := make([]string, 0, len(bad))
+	for l := range bad {
+		langs = append(langs, l)
+	}
+	sort.Strings(langs)
+
+	var out []PlanEntry
+	for _, l := range langs {
+		if valid[l] {
+			slog.Debug("already has AC3, skipping track", "lang", l)
+			continue
+		}
+		out = append(out, bad[l])
+	}
+	return out
+}
+
+// CountTracks returns the number of audio streams and how many of them
+// are AC3 (the appended-track gates compare these).
+func CountTracks(info *probe.Info) (total, ac3 int) {
+	for _, s := range info.Streams {
+		if s.CodecType != probe.TypeAudio {
+			continue
+		}
+		total++
+		if s.CodecName == "ac3" {
+			ac3++
+		}
+	}
+	return total, ac3
 }
 
 func (t *tool) processFile(path string) {
@@ -153,57 +219,25 @@ func (t *tool) processFile(path string) {
 		return
 	}
 
-	// classify audio: existing AC3 marks a language "valid" unless it is a
-	// commentary or low-bitrate track; DTS/TrueHD/FLAC are "bad"
-	valid := map[string]bool{}
-	bad := map[string]plan{}
-	hasGate := t.cfg.GateLang == ""
-	for _, ta := range info.ByType()[probe.TypeAudio] {
-		lang := strings.ToLower(ta.Stream.Tags.Language)
-		if t.cfg.GateLang != "" && lang == t.cfg.GateLang {
-			hasGate = true
+	// language gate: only files with at least one track of that language
+	if t.cfg.GateLang != "" {
+		hasGate := false
+		for _, ta := range info.ByType()[probe.TypeAudio] {
+			if strings.ToLower(ta.Stream.Tags.Language) == t.cfg.GateLang {
+				hasGate = true
+				break
+			}
 		}
-		switch ta.Stream.CodecName {
-		case "ac3":
-			if media.Commentary(ta.Stream.Tags.Title) {
-				continue
-			}
-			br := ta.Stream.BitRateInt()
-			if br > 0 && br < t.cfg.MinBR {
-				continue
-			}
-			if br == 0 && ta.Stream.Channels < 6 {
-				continue
-			}
-			valid[lang] = true
-		case "dts", "truehd", "flac":
-			if _, ok := bad[lang]; !ok {
-				bad[lang] = plan{ordinal: ta.Ordinal, lang: lang, codec: ta.Stream.CodecName}
-			}
+		if !hasGate {
+			fmt.Fprintf(t.out, "Skipping (no '%s' audio track): %s\n", t.cfg.GateLang, path)
+			t.untouched++
+			return
 		}
 	}
 
-	if t.cfg.GateLang != "" && !hasGate {
-		fmt.Fprintf(t.out, "Skipping (no '%s' audio track): %s\n", t.cfg.GateLang, path)
-		t.untouched++
-		return
-	}
-
-	langs := make([]string, 0, len(bad))
-	for l := range bad {
-		langs = append(langs, l)
-	}
-	sort.Strings(langs)
-
-	var toConvert []plan
-	for _, l := range langs {
-		if valid[l] {
-			slog.Debug("already has AC3, skipping track", "file", path, "lang", l)
-			continue
-		}
-		toConvert = append(toConvert, bad[l])
-	}
-
+	// classify audio: DTS/TrueHD/FLAC languages without a valid same-language
+	// AC3 track need a compatibility copy (see PlanCompat for the rules)
+	toConvert := PlanCompat(info, t.cfg.MinBR)
 	if len(toConvert) == 0 {
 		fmt.Fprintf(t.out, "OK (nothing to convert): %s\n", path)
 		t.untouched++
@@ -221,7 +255,7 @@ func (t *tool) processFile(path string) {
 	if t.cfg.DryRun {
 		fmt.Fprintf(t.out, "Would convert: %s (%s)\n", path, media.HumanBytes(srcSize))
 		for _, p := range toConvert {
-			fmt.Fprintf(t.out, "  - append AC3 640k for audio #%d (%s, lang '%s')\n", p.ordinal, p.codec, media.LangDisplay(p.lang))
+			fmt.Fprintf(t.out, "  - append AC3 640k for audio #%d (%s, lang '%s')\n", p.Ordinal, p.Codec, media.LangDisplay(p.Lang))
 		}
 		t.converted++
 		return
@@ -229,7 +263,7 @@ func (t *tool) processFile(path string) {
 
 	fmt.Fprintf(t.out, "Converting: %s (%s)\n", path, media.HumanBytes(srcSize))
 	for _, p := range toConvert {
-		fmt.Fprintf(t.out, "  - append AC3 640k for audio #%d (%s, lang '%s')\n", p.ordinal, p.codec, media.LangDisplay(p.lang))
+		fmt.Fprintf(t.out, "  - append AC3 640k for audio #%d (%s, lang '%s')\n", p.Ordinal, p.Codec, media.LangDisplay(p.Lang))
 	}
 
 	var fmtName string
@@ -241,7 +275,7 @@ func (t *tool) processFile(path string) {
 	}
 
 	// the appended tracks must survive: audio count grows by the plan size
-	srcTotal, srcAc3 := countAudio(info)
+	srcTotal, srcAc3 := CountTracks(info)
 
 	tmp := fmt.Sprintf("%s.%d.tmp", path, os.Getpid())
 	t.guard.Add(tmp)
@@ -260,7 +294,7 @@ func (t *tool) processFile(path string) {
 	// existing audio streams) is encoded to AC3; the original survives
 	for i, p := range toConvert {
 		out := srcTotal + i
-		args = append(args, "-map", fmt.Sprintf("0:a:%d", p.ordinal),
+		args = append(args, "-map", fmt.Sprintf("0:a:%d", p.Ordinal),
 			fmt.Sprintf("-c:a:%d", out), "ac3", fmt.Sprintf("-b:a:%d", out), "640k")
 	}
 	args = append(args, "-c:s", "copy", "-c:d", "copy", "-max_muxing_queue_size", "4096", "-f", fmtName, tmp)
@@ -287,19 +321,6 @@ func (t *tool) processFile(path string) {
 	t.converted++
 }
 
-func countAudio(info *probe.Info) (total, ac3 int) {
-	for _, s := range info.Streams {
-		if s.CodecType != probe.TypeAudio {
-			continue
-		}
-		total++
-		if s.CodecName == "ac3" {
-			ac3++
-		}
-	}
-	return total, ac3
-}
-
 // gatesPass verifies that every original stream survived plus the appended
 // AC3 tracks, and that no content was lost.
 func (t *tool) gatesPass(path, tmp string, info *probe.Info, srcTotal, srcAc3, appended int) bool {
@@ -309,7 +330,7 @@ func (t *tool) gatesPass(path, tmp string, info *probe.Info, srcTotal, srcAc3, a
 		t.failed++
 		return false
 	}
-	newTotal, newAc3 := countAudio(newInfo)
+	newTotal, newAc3 := CountTracks(newInfo)
 	if newTotal != srcTotal+appended || newAc3 != srcAc3+appended {
 		fmt.Fprintf(t.out, "Error: output does not match the plan (audio %d/%d, ac3 %d/%d) - keeping original\n",
 			newTotal, srcTotal+appended, newAc3, srcAc3+appended)

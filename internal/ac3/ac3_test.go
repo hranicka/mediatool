@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/hranicka/mediatool/internal/ignore"
+	"github.com/hranicka/mediatool/internal/probe"
 	"github.com/hranicka/mediatool/internal/run"
 )
 
@@ -308,5 +309,38 @@ func TestAC3RunAllWithIgnores(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "Skipping (ignored)") {
 		t.Errorf("ignore skip line missing: %s", out.String())
+	}
+}
+
+func TestPlanCompat(t *testing.T) {
+	info := &probe.Info{Streams: []probe.Stream{
+		{CodecName: "dts", CodecType: "audio", Channels: 6, Tags: probe.Tags{Language: "cs"}},
+		// en has a low-bitrate AC3 (192k < 448k) plus a valid 640k one -> valid
+		{CodecName: "ac3", CodecType: "audio", BitRate: "192000", Tags: probe.Tags{Language: "en"}},
+		{CodecName: "ac3", CodecType: "audio", BitRate: "640000", Tags: probe.Tags{Language: "en"}},
+		{CodecName: "truehd", CodecType: "audio", Tags: probe.Tags{Language: "en"}},
+		// commentary AC3 never validates a language
+		{CodecName: "dts", CodecType: "audio", Channels: 6, Tags: probe.Tags{Language: "de"}},
+		{CodecName: "ac3", CodecType: "audio", BitRate: "640000", Tags: probe.Tags{Language: "de", Title: "Director commentary"}},
+		{CodecName: "flac", CodecType: "audio", Tags: probe.Tags{Language: "sk"}},
+	}}
+
+	plans := PlanCompat(info, 448000)
+	if len(plans) != 3 {
+		t.Fatalf("plans: %+v", plans)
+	}
+	want := []PlanEntry{
+		{Ordinal: 0, Lang: "cs", Codec: "dts"},
+		{Ordinal: 4, Lang: "de", Codec: "dts"},
+		{Ordinal: 6, Lang: "sk", Codec: "flac"},
+	}
+	for i, w := range want {
+		if plans[i] != w {
+			t.Errorf("plans[%d] = %+v, want %+v", i, plans[i], w)
+		}
+	}
+
+	if total, ac3Count := CountTracks(info); total != 7 || ac3Count != 3 {
+		t.Errorf("CountTracks = %d/%d, want 7/3", total, ac3Count)
 	}
 }
