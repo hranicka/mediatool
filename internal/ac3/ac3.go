@@ -250,8 +250,13 @@ func (t *tool) processFile(path string) {
 	args := []string{"-hide_banner", "-loglevel", "error", "-stats", "-nostdin", "-y", "-i", path,
 		"-map", "0", "-map_metadata", "0", "-map_chapters", "0",
 		"-c:v", "copy", "-c:a", "copy"}
-	for _, p := range toConvert {
-		args = append(args, fmt.Sprintf("-c:a:%d", p.ordinal), "ac3", fmt.Sprintf("-b:a:%d", p.ordinal), "640k")
+	// appending duplicates the track: every converted stream is mapped a
+	// second time and its appended copy (output audio ordinal after all
+	// existing audio streams) is encoded to AC3; the original survives
+	for i, p := range toConvert {
+		out := srcTotal + i
+		args = append(args, "-map", fmt.Sprintf("0:a:%d", p.ordinal),
+			fmt.Sprintf("-c:a:%d", out), "ac3", fmt.Sprintf("-b:a:%d", out), "640k")
 	}
 	args = append(args, "-c:s", "copy", "-c:d", "copy", "-max_muxing_queue_size", "4096", "-f", fmtName, tmp)
 	if _, err := t.r.Stream(t.ffmpegBin, args...); err != nil {

@@ -137,11 +137,13 @@ func TestAC3HappyPath(t *testing.T) {
 		t.Fatalf("converted: %+v out=%s", tl, out.String())
 	}
 	args := ff.encodeLog[0]
-	if !hasPair(args, "-c:a:0", "ac3") || !hasPair(args, "-b:a:0", "640k") {
-		t.Errorf("dts track not converted: %v", args)
+	// the original tracks are copied; the AC3 copies are appended after all
+	// existing audio streams (srcTotal=3 -> out ordinals 3 and 4)
+	if !hasPair(args, "-map", "0:a:0") || !hasPair(args, "-c:a:3", "ac3") || !hasPair(args, "-b:a:3", "640k") {
+		t.Errorf("dts track not appended as ac3: %v", args)
 	}
-	if !hasPair(args, "-c:a:2", "ac3") || !hasPair(args, "-b:a:2", "640k") {
-		t.Errorf("truehd track not converted: %v", args)
+	if !hasPair(args, "-map", "0:a:2") || !hasPair(args, "-c:a:4", "ac3") || !hasPair(args, "-b:a:4", "640k") {
+		t.Errorf("truehd track not appended as ac3: %v", args)
 	}
 	if !hasPair(args, "-c:v", "copy") || !hasPair(args, "-c:s", "copy") || !hasPair(args, "-f", "matroska") {
 		t.Errorf("copy passthrough args wrong: %v", args)
@@ -189,8 +191,9 @@ func TestAC3LowBitrateInvalid(t *testing.T) {
 	if tl.converted != 1 {
 		t.Fatalf("low-bitrate AC3 must not count as valid: %+v", tl)
 	}
-	if !hasPair(ff.encodeLog[0], "-c:a:0", "ac3") {
-		t.Errorf("dts track must be converted: %v", ff.encodeLog[0])
+	if !hasPair(ff.encodeLog[0], "-map", "0:a:0") || !hasPair(ff.encodeLog[0], "-c:a:2", "ac3") {
+		// srcTotal=2 -> the appended copy is output audio ordinal 2
+		t.Errorf("dts track must be appended as ac3: %v", ff.encodeLog[0])
 	}
 }
 
