@@ -41,6 +41,34 @@ func TestLoadMissingFiles(t *testing.T) {
 	}
 }
 
+func TestLoadAncestors(t *testing.T) {
+	base := t.TempDir()
+	child := filepath.Join(base, "foo", "bar", "baz")
+	if err := os.MkdirAll(child, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(base, ".video-scripts-ignore"), "grand\n")
+	write(t, filepath.Join(base, "foo", "bar", ".cleaner-ignore"), "bar-level\n")
+	write(t, filepath.Join(child, ".mediatool-ignore"), "child-level\n")
+
+	l := Load(child, "clean", nil)
+	for _, want := range []string{"grand", "bar-level", "child-level"} {
+		if !l.Match("/some/" + want + "/movie.mkv") {
+			t.Errorf("ancestor entry %q missing: %v", want, l.entries)
+		}
+	}
+
+	// the tool's legacy file is looked up at every level too
+	write(t, filepath.Join(base, "foo", ".hevcconverter-ignore"), "foo-tool\n")
+	l2 := Load(child, "convert", nil)
+	if !l2.Match("/x/foo-tool/y.mkv") {
+		t.Errorf("ancestor legacy file missing: %v", l2.entries)
+	}
+	if l2.Match("/x/bar-level/y.mkv") {
+		t.Error("the cleaner file must not apply to the convert subcommand")
+	}
+}
+
 func TestMatch(t *testing.T) {
 	l := List{entries: []string{"season 1", "x[y]z", "trailers"}}
 

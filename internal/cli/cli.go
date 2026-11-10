@@ -61,8 +61,9 @@ func ResolveMediaTarget(arg string, allowFile bool) (string, error) {
 	return target, nil
 }
 
-// IgnoresDir returns the directory whose dot ignore files govern the
-// target: the target's own directory for a single file.
+// IgnoresDir returns the directory where the ignore-file search starts:
+// the target's own directory for a single file (Load then walks up the
+// ancestor chain).
 func IgnoresDir(target string) string {
 	if info, err := os.Stat(target); err == nil && !info.IsDir() {
 		return filepath.Dir(target)

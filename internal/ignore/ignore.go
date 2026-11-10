@@ -31,8 +31,9 @@ type List struct {
 }
 
 // Load returns the ignore list for a subcommand: the shared files plus the
-// tool's own file at the top of dir, plus the extra CLI entries. Missing
-// files are the normal case.
+// tool's own file, looked up in dir **and every ancestor directory up to
+// the filesystem root** (like a flat gitignore hierarchy), plus the extra
+// CLI entries. Missing files are the normal case.
 func Load(dir, tool string, extra []string) List {
 	names := append([]string{}, sharedFiles...)
 	if legacy, ok := legacyFiles[tool]; ok {
@@ -40,8 +41,13 @@ func Load(dir, tool string, extra []string) List {
 	}
 
 	l := List{}
-	for _, name := range names {
-		l.readFile(filepath.Join(dir, name))
+	for d := dir; ; d = filepath.Dir(d) {
+		for _, name := range names {
+			l.readFile(filepath.Join(d, name))
+		}
+		if d == filepath.Dir(d) {
+			break // reached the root
+		}
 	}
 	l.entries = append(l.entries, extra...)
 	slog.Debug("ignore list", "tool", tool, "dir", dir, "entries", l.entries)

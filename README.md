@@ -112,8 +112,10 @@ path — directory and file names both count; `#` comments allowed):
 | `.hevcconverter-ignore` / `.cleaner-ignore` / `.ac3converter-ignore` / `.enhance-ignore` / `.dupfinder-ignore` | their command |
 | `-i "a,b"` CLI list | all commands |
 
-Files are read from the top of the passed directory only (for a single-file
-target: the file's directory).
+Files are looked up in the target directory **and every ancestor up to the
+filesystem root** (like a flat gitignore hierarchy; for a single-file target
+the search starts at the file's directory), so an ignore file in `/foo` or
+`/foo/bar` also governs `mediatool clean /foo/bar/baz`.
 
 ## Conventions
 
