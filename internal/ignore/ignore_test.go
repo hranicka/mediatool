@@ -47,7 +47,7 @@ func TestLoadAncestors(t *testing.T) {
 	if err := os.MkdirAll(child, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	write(t, filepath.Join(base, ".video-scripts-ignore"), "grand\n")
+	write(t, filepath.Join(base, ".mediatool-ignore"), "grand\n")
 	write(t, filepath.Join(base, "foo", "bar", ".cleaner-ignore"), "bar-level\n")
 	write(t, filepath.Join(child, ".mediatool-ignore"), "child-level\n")
 
@@ -58,11 +58,11 @@ func TestLoadAncestors(t *testing.T) {
 		}
 	}
 
-	// the tool's legacy file is looked up at every level too
+	// the command's own file is looked up at every level too
 	write(t, filepath.Join(base, "foo", ".hevcconverter-ignore"), "foo-tool\n")
 	l2 := Load(child, "convert", nil)
 	if !l2.Match("/x/foo-tool/y.mkv") {
-		t.Errorf("ancestor legacy file missing: %v", l2.entries)
+		t.Errorf("ancestor command file missing: %v", l2.entries)
 	}
 	if l2.Match("/x/bar-level/y.mkv") {
 		t.Error("the cleaner file must not apply to the convert subcommand")

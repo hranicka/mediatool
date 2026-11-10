@@ -108,8 +108,7 @@ path — directory and file names both count; `#` comments allowed):
 | File | Read by |
 |---|---|
 | `.mediatool-ignore` in the target dir | all commands |
-| `.video-scripts-ignore` in the target dir | all commands (bash-suite era compat) |
-| `.hevcconverter-ignore` / `.cleaner-ignore` / `.ac3converter-ignore` / `.enhance-ignore` / `.dupfinder-ignore` | their command |
+| `.hevcconverter-ignore` (convert) / `.cleaner-ignore` (clean) / `.ac3converter-ignore` (ac3) / `.enhance-ignore` (enhance) / `.dupfinder-ignore` (dup) | their command — per-command ignore lists, e.g. "not to clean" vs "not to re-encode" |
 | `-i "a,b"` CLI list | all commands |
 
 Files are looked up in the target directory **and every ancestor up to the

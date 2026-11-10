@@ -11,13 +11,13 @@ import (
 	"strings"
 )
 
-// sharedFiles are read for every subcommand; the second name keeps the
-// bash-suite era files working.
-var sharedFiles = []string{".mediatool-ignore", ".video-scripts-ignore"}
+// sharedFiles are read for every subcommand.
+var sharedFiles = []string{".mediatool-ignore"}
 
-// legacyFiles maps subcommands to their per-tool ignore file from the
-// retired mediatool/bash generations.
-var legacyFiles = map[string]string{
+// commandFiles maps subcommands to their own ignore file: a per-command
+// ignore list, so a path can be excluded from one command (e.g. "not to
+// clean") while still being processed by the others (e.g. re-encode).
+var commandFiles = map[string]string{
 	"convert": ".hevcconverter-ignore",
 	"clean":   ".cleaner-ignore",
 	"ac3":     ".ac3converter-ignore",
@@ -31,12 +31,12 @@ type List struct {
 }
 
 // Load returns the ignore list for a subcommand: the shared files plus the
-// tool's own file, looked up in dir **and every ancestor directory up to
+// command's own file, looked up in dir **and every ancestor directory up to
 // the filesystem root** (like a flat gitignore hierarchy), plus the extra
 // CLI entries. Missing files are the normal case.
 func Load(dir, tool string, extra []string) List {
 	names := append([]string{}, sharedFiles...)
-	if legacy, ok := legacyFiles[tool]; ok {
+	if legacy, ok := commandFiles[tool]; ok {
 		names = append(names, legacy)
 	}
 

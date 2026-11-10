@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.0.2
+
+- Dropped `.video-scripts-ignore` support (bash-suite era). The shared
+  ignore file is `.mediatool-ignore`.
+- The per-command ignore files (`.hevcconverter-ignore` for convert,
+  `.cleaner-ignore` for clean, `.ac3converter-ignore` for ac3,
+  `.enhance-ignore` for enhance, `.dupfinder-ignore` for dup) are a normal
+  feature, not legacy: they give each command its own ignore list (e.g.
+  "not to clean" vs "not to re-encode") at every path level.
+
 ## 2.0.1
 
 - Dot ignore files are now honored along the whole target path: the search
