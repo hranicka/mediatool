@@ -50,6 +50,28 @@ func TestLoadMissingFiles(t *testing.T) {
 	}
 }
 
+func TestDupHasNoPerCommandFile(t *testing.T) {
+	// dup is a read-only report: only the shared file and -i apply
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, ".mediatool-dup-ignore"), "dupfile\n")
+	write(t, filepath.Join(dir, ".dupfinder-ignore"), "duplegacy\n")
+
+	l, warnings := Load(dir, "dup", nil)
+	if l.Match("/x/dupfile/y.mkv") || l.Match("/x/duplegacy/y.mkv") {
+		t.Errorf("dup must not have per-command ignore files: %v", l.entries)
+	}
+	if len(warnings) != 0 {
+		t.Errorf("no deprecation warnings expected for dup: %v", warnings)
+	}
+
+	// the shared file still governs dup
+	write(t, filepath.Join(dir, ".mediatool-ignore"), "shared\n")
+	l2, _ := Load(dir, "dup", nil)
+	if !l2.Match("/x/shared/y.mkv") {
+		t.Errorf("shared file must apply to dup: %v", l2.entries)
+	}
+}
+
 func TestLoadAncestors(t *testing.T) {
 	base := t.TempDir()
 	child := filepath.Join(base, "foo", "bar", "baz")

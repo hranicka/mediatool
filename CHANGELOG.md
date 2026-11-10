@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.4
+
+- dup no longer reads per-command ignore files: it is a read-only report,
+  so only the shared `.mediatool-ignore` and the `-i` list apply. The
+  `.mediatool-dup-ignore` / `.dupfinder-ignore` names introduced or
+  inherited earlier are gone; they never existed in the pre-2.0 tooling
+  (the old dupfinder had no ignore support at all).
+
 ## 2.0.3
 
 - New per-command ignore file names following the subcommands:

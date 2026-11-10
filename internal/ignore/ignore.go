@@ -17,13 +17,13 @@ var sharedFiles = []string{".mediatool-ignore"}
 
 // commandFiles are the per-command ignore lists: a path can be excluded
 // from one command (e.g. "not to clean") while still being processed by
-// the others (e.g. re-encode).
+// the others (e.g. re-encode). dup is absent on purpose — it is a
+// read-only report, so only the shared file and -i apply.
 var commandFiles = map[string]string{
 	"convert": ".mediatool-convert-ignore",
 	"clean":   ".mediatool-clean-ignore",
 	"ac3":     ".mediatool-ac3-ignore",
 	"enhance": ".mediatool-enhance-ignore",
-	"dup":     ".mediatool-dup-ignore",
 }
 
 // legacyCommandFiles are the retired pre-2.0 per-command names, kept for
@@ -33,7 +33,6 @@ var legacyCommandFiles = map[string]string{
 	"clean":   ".cleaner-ignore",
 	"ac3":     ".ac3converter-ignore",
 	"enhance": ".enhance-ignore",
-	"dup":     ".dupfinder-ignore",
 }
 
 // List is a set of substring entries matched literally against full paths.
