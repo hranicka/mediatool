@@ -166,6 +166,53 @@ func (t *tool) skip(format string, args ...any) {
 	t.untouched++
 }
 
+// TrackPlan is the audio/subtitle removal plan for one file under a
+// language whitelist: the input per-type ordinals to drop and the counts
+// that must survive the remux. Sole tracks are kept unless purgeSole.
+type TrackPlan struct {
+	RemoveAudio []int
+	RemoveSubs  []int
+	KeptAudio   int
+	KeptSubs    int
+	Lines       []string
+}
+
+// PlanTracks classifies audio and subtitle tracks against the whitelist —
+// the clean command's rules, shared with convert's -l cleanup: a track
+// whose language is outside the whitelist is removed, unless it is the
+// only track of its type and purgeSole is false.
+func PlanTracks(info *probe.Info, whitelist []string, purgeSole bool) TrackPlan {
+	src := countStreams(info)
+	plan := TrackPlan{KeptAudio: src.audio, KeptSubs: src.subtitle}
+	for _, ta := range info.ByType()[probe.TypeAudio] {
+		lang := ta.Stream.Tags.Language
+		if media.LangKept(lang, whitelist) {
+			continue
+		}
+		if src.audio == 1 && !purgeSole {
+			plan.Lines = append(plan.Lines, fmt.Sprintf("keep audio #%d (%s, lang '%s') - sole audio track", ta.Ordinal, ta.Stream.CodecName, media.LangDisplay(lang)))
+			continue
+		}
+		plan.RemoveAudio = append(plan.RemoveAudio, ta.Ordinal)
+		plan.Lines = append(plan.Lines, fmt.Sprintf("remove audio #%d (%s, lang '%s')", ta.Ordinal, ta.Stream.CodecName, media.LangDisplay(lang)))
+		plan.KeptAudio--
+	}
+	for _, ts := range info.ByType()[probe.TypeSubtitle] {
+		lang := ts.Stream.Tags.Language
+		if media.LangKept(lang, whitelist) {
+			continue
+		}
+		if src.subtitle == 1 && !purgeSole {
+			plan.Lines = append(plan.Lines, fmt.Sprintf("keep subtitle #%d (%s, lang '%s') - sole subtitle track", ts.Ordinal, ts.Stream.CodecName, media.LangDisplay(lang)))
+			continue
+		}
+		plan.RemoveSubs = append(plan.RemoveSubs, ts.Ordinal)
+		plan.Lines = append(plan.Lines, fmt.Sprintf("remove subtitle #%d (%s, lang '%s')", ts.Ordinal, ts.Stream.CodecName, media.LangDisplay(lang)))
+		plan.KeptSubs--
+	}
+	return plan
+}
+
 func (t *tool) processFile(path string) {
 	info, err := probe.Probe(t.r, t.ffprobeBin, path)
 	if err != nil {
@@ -180,42 +227,24 @@ func (t *tool) processFile(path string) {
 		return
 	}
 
-	// decide removals; the sole-track rule counts the totals first
+	// decide removals: cover art plus the whitelisted-track plan
+	trackPlan := PlanTracks(info, t.whitelist, t.cfg.PurgeSole)
 	var removeArgs []string
 	var plan []string
-	keep := src
 	for _, tv := range info.ByType()[probe.TypeVideo] {
 		if media.IsCoverArt(tv.Stream) {
 			removeArgs = append(removeArgs, "-map", fmt.Sprintf("-0:v:%d", tv.Ordinal))
 			plan = append(plan, fmt.Sprintf("remove cover art video #%d (%s)", tv.Ordinal, tv.Stream.CodecName))
 		}
 	}
-	for _, ta := range info.ByType()[probe.TypeAudio] {
-		lang := ta.Stream.Tags.Language
-		if media.LangKept(lang, t.whitelist) {
-			continue
-		}
-		if src.audio == 1 && !t.cfg.PurgeSole {
-			plan = append(plan, fmt.Sprintf("keep audio #%d (%s, lang '%s') - sole audio track", ta.Ordinal, ta.Stream.CodecName, media.LangDisplay(lang)))
-			continue
-		}
-		removeArgs = append(removeArgs, "-map", fmt.Sprintf("-0:a:%d", ta.Ordinal))
-		plan = append(plan, fmt.Sprintf("remove audio #%d (%s, lang '%s')", ta.Ordinal, ta.Stream.CodecName, media.LangDisplay(lang)))
-		keep.audio--
+	for _, o := range trackPlan.RemoveAudio {
+		removeArgs = append(removeArgs, "-map", fmt.Sprintf("-0:a:%d", o))
 	}
-	for _, ts := range info.ByType()[probe.TypeSubtitle] {
-		lang := ts.Stream.Tags.Language
-		if media.LangKept(lang, t.whitelist) {
-			continue
-		}
-		if src.subtitle == 1 && !t.cfg.PurgeSole {
-			plan = append(plan, fmt.Sprintf("keep subtitle #%d (%s, lang '%s') - sole subtitle track", ts.Ordinal, ts.Stream.CodecName, media.LangDisplay(lang)))
-			continue
-		}
-		removeArgs = append(removeArgs, "-map", fmt.Sprintf("-0:s:%d", ts.Ordinal))
-		plan = append(plan, fmt.Sprintf("remove subtitle #%d (%s, lang '%s')", ts.Ordinal, ts.Stream.CodecName, media.LangDisplay(lang)))
-		keep.subtitle--
+	for _, o := range trackPlan.RemoveSubs {
+		removeArgs = append(removeArgs, "-map", fmt.Sprintf("-0:s:%d", o))
 	}
+	plan = append(plan, trackPlan.Lines...)
+	keep := counts{video: src.video, audio: trackPlan.KeptAudio, subtitle: trackPlan.KeptSubs}
 
 	if len(removeArgs) == 0 {
 		fmt.Fprintf(t.out, "OK (nothing to remove): %s\n", path)
