@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/hranicka/mediatool/internal/walk"
 )
 
 // Ignores adapts a comma-separated flag value into a string slice. String
@@ -52,9 +54,7 @@ func ResolveMediaTarget(arg string, allowFile bool) (string, error) {
 		if !allowFile {
 			return "", fmt.Errorf("%s is not a directory", target)
 		}
-		switch strings.ToLower(filepath.Ext(target)) {
-		case ".mkv", ".mp4":
-		default:
+		if !walk.IsMedia(filepath.Ext(target)) {
 			return "", fmt.Errorf("%s is neither a media file nor a directory", target)
 		}
 	}

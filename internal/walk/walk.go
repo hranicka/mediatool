@@ -10,8 +10,25 @@ import (
 	"strings"
 )
 
-// Media returns the paths of *.mkv and *.mp4 files under dir
-// (case-insensitive), excluding AppleDouble ._ files; .old backups never
+// Extensions lists the media file extensions the walk picks up: the
+// library containers (mkv, mp4) plus the camera/dump formats the retired
+// bash hevc-convert.sh handled (.mts, .avi, .mpg, ...).
+var Extensions = []string{".mkv", ".mp4", ".avi", ".mpg", ".mpeg", ".mts", ".m2ts", ".mov", ".ts", ".wmv"}
+
+// IsMedia reports whether a file extension (compared case-insensitively)
+// is a media extension the walk picks up.
+func IsMedia(ext string) bool {
+	ext = strings.ToLower(ext)
+	for _, e := range Extensions {
+		if ext == e {
+			return true
+		}
+	}
+	return false
+}
+
+// Media returns the paths of media files under dir (case-insensitive on
+// the extensions), excluding AppleDouble ._ files; .old backups never
 // match because the path must end in a media extension. The result is
 // sorted for a deterministic order. Unreadable subdirectories are logged
 // and skipped, not fatal (like find); only an unreadable root fails.
@@ -32,8 +49,7 @@ func Media(dir string) ([]string, error) {
 		if strings.HasPrefix(base, "._") {
 			return nil
 		}
-		switch strings.ToLower(filepath.Ext(path)) {
-		case ".mkv", ".mp4":
+		if IsMedia(filepath.Ext(path)) {
 			paths = append(paths, path)
 		}
 		return nil

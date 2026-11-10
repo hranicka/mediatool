@@ -3,8 +3,25 @@ package walk
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestIsMedia(t *testing.T) {
+	for _, ext := range Extensions {
+		if !IsMedia(ext) {
+			t.Errorf("IsMedia(%q) must be true", ext)
+		}
+		if !IsMedia(strings.ToUpper(ext)) {
+			t.Errorf("IsMedia(%q) must be case-insensitive", ext)
+		}
+	}
+	for _, ext := range []string{"", ".txt", ".nfo", ".jpg"} {
+		if IsMedia(ext) {
+			t.Errorf("IsMedia(%q) must be false", ext)
+		}
+	}
+}
 
 func TestMedia(t *testing.T) {
 	dir := t.TempDir()
@@ -17,9 +34,12 @@ func TestMedia(t *testing.T) {
 		"c.mp4",
 		filepath.Join("season 1", "b.MKV"),
 		filepath.Join("season 1", "._hidden.mkv"), // AppleDouble - excluded
-		"movie.mkv.old",                    // backup - excluded
-		"notes.txt",                        // not media - excluded
-		filepath.Join("season 1", "e.mov"), // other container - excluded
+		"movie.mkv.old",  // backup - excluded
+		"notes.txt",      // not media - excluded
+		"clip.mts",       // camera format - picked up
+		"cam.AVI",        // camera format, case-insensitive
+		"movie.m2ts.old", // camera-format backup - excluded
+		"e.txt.mts",      // media extension wins over the stem
 	}
 	for _, f := range files {
 		if err := os.WriteFile(filepath.Join(dir, f), []byte("x"), 0o644); err != nil {
@@ -34,6 +54,9 @@ func TestMedia(t *testing.T) {
 	want := []string{
 		filepath.Join(dir, "a.mkv"),
 		filepath.Join(dir, "c.mp4"),
+		filepath.Join(dir, "cam.AVI"),
+		filepath.Join(dir, "clip.mts"),
+		filepath.Join(dir, "e.txt.mts"),
 		filepath.Join(sub, "b.MKV"),
 	}
 	if len(got) != len(want) {
