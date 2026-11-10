@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/hranicka/media-tool/internal/backup"
+	"github.com/hranicka/media-tool/internal/cli"
 	"github.com/hranicka/media-tool/internal/encoders"
 	"github.com/hranicka/media-tool/internal/gates"
 	"github.com/hranicka/media-tool/internal/ignore"
@@ -84,7 +85,7 @@ func Run(args []string) error {
 	fs.IntVar(&cfg.CQ, "q", 0, "CQ/CRF value (defaults: movie 26, camera 28, lowq 31, chromecast 22)")
 	fs.StringVar(&scaleArg, "r", "", "downscale to this height when the source is larger (e.g. 1080p); never upscales")
 	fs.StringVar(&cfg.VaapiDevice, "vaapi_device", "/dev/dri/renderD128", "VAAPI render device")
-	fs.Var(cliIgnoreVar{&cfg.Ignores}, "i", "comma-separated substrings to ignore (also read from the dot ignore files)")
+	fs.Var(cli.Ignores{Dst: &cfg.Ignores}, "i", "comma-separated substrings to ignore (also read from the dot ignore files)")
 	fs.BoolVar(&cfg.Force, "f", false, "force re-encoding of sources that are not H.264")
 	fs.BoolVar(&cfg.DryRun, "n", false, "dry run: list what would be done")
 	fs.BoolVar(&verbose, "v", false, "verbose/debug output")
@@ -98,16 +99,9 @@ func Run(args []string) error {
 		fmt.Fprintln(os.Stderr, "usage: media-tool convert [flags] <directory>")
 		return fmt.Errorf("convert needs exactly one directory argument")
 	}
-	dir, err := filepath.Abs(fs.Arg(0))
+	dir, err := cli.ResolveMediaTarget(fs.Arg(0), false)
 	if err != nil {
-		return fmt.Errorf("cannot resolve directory: %w", err)
-	}
-	if resolved, linkErr := filepath.EvalSymlinks(dir); linkErr == nil {
-		dir = resolved
-	}
-	info, err := os.Stat(dir)
-	if err != nil || !info.IsDir() {
-		return fmt.Errorf("directory %s does not exist", dir)
+		return err
 	}
 	cfg.Dir = dir
 
@@ -179,20 +173,6 @@ func parseScaleHeight(arg string) (int, error) {
 	}
 	// round down to even (HEVC 4:2:0 needs even dimensions)
 	return h / 2 * 2, nil
-}
-
-// cliIgnoreVar adapts a comma-separated flag value into a string slice.
-type cliIgnoreVar struct{ dst *[]string }
-
-func (v cliIgnoreVar) String() string { return strings.Join(*v.dst, ",") }
-
-func (v cliIgnoreVar) Set(s string) error {
-	for _, e := range strings.Split(s, ",") {
-		if e != "" {
-			*v.dst = append(*v.dst, e)
-		}
-	}
-	return nil
 }
 
 func (t *tool) runAll() error {

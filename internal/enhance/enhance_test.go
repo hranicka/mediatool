@@ -262,6 +262,32 @@ func TestMergeFilters(t *testing.T) {
 	}
 }
 
+func TestEnhanceVAAPIEncode(t *testing.T) {
+	dir, ff := setup(t)
+	src := filepath.Join(dir, "anime.mkv")
+	writeFile(t, src, 1_000_000)
+
+	out := &bytes.Buffer{}
+	tl := newTestTool(t, dir, ff, ff.enginePath, &Config{Dir: dir, VaapiDevice: "/dev/dri/renderD129"}, out)
+	tl.enc = encoders.Encoder{Kind: encoders.VAAPI, Label: "VAAPI (Intel/AMD)"}
+	tl.processFile(src)
+
+	if tl.enhanced != 1 {
+		t.Fatalf("enhanced: %+v out=%s", tl, out.String())
+	}
+	args := ff.encodeLog[0]
+	// hwupload cannot work without the device init in the same invocation
+	if !hasPair(args, "-vaapi_device", "/dev/dri/renderD129") {
+		t.Errorf("encode must init the vaapi device: %v", args)
+	}
+	if !hasPair(args, "-vf", "scale=-2:1080:flags=lanczos,format=nv12,hwupload") {
+		t.Errorf("vaapi filter chain missing: %v", args)
+	}
+	if !hasPair(args, "-c:v", "hevc_vaapi") {
+		t.Errorf("wrong encoder: %v", args)
+	}
+}
+
 func TestEnsureEngineSkipsExisting(t *testing.T) {
 	dir := t.TempDir()
 	engine := filepath.Join(dir, "engine")

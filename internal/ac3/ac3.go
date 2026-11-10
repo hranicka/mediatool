@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/hranicka/media-tool/internal/backup"
+	"github.com/hranicka/media-tool/internal/cli"
 	"github.com/hranicka/media-tool/internal/gates"
 	"github.com/hranicka/media-tool/internal/ignore"
 	"github.com/hranicka/media-tool/internal/media"
@@ -50,9 +51,9 @@ func Run(args []string) error {
 	fs := flag.NewFlagSet("ac3", flag.ExitOnError)
 	var cfg Config
 	var verbose bool
-	fs.IntVar(&cfg.MinBR, "b", 448000, "minimal bitrate (kbps) of an existing AC3 track to count as a valid conversion")
+	fs.IntVar(&cfg.MinBR, "b", 448000, "minimal bitrate (bit/s, default 448000 = 448 kbps) of an existing AC3 track to count as a valid conversion")
 	fs.StringVar(&cfg.GateLang, "l", "", "only process files containing at least one audio track of this language")
-	fs.Var(cliIgnores{&cfg.Ignores}, "i", "comma-separated substrings to ignore (also read from the dot ignore files)")
+	fs.Var(cli.Ignores{Dst: &cfg.Ignores}, "i", "comma-separated substrings to ignore (also read from the dot ignore files)")
 	fs.BoolVar(&cfg.DryRun, "n", false, "dry run: list what would be converted")
 	fs.BoolVar(&verbose, "v", false, "verbose/debug output")
 	if err := fs.Parse(args); err != nil {
@@ -65,7 +66,7 @@ func Run(args []string) error {
 		fmt.Fprintln(os.Stderr, "usage: media-tool ac3 [flags] <directory|file>")
 		return fmt.Errorf("ac3 needs exactly one directory or file argument")
 	}
-	target, err := resolveTarget(fs.Arg(0))
+	target, err := cli.ResolveMediaTarget(fs.Arg(0), true)
 	if err != nil {
 		return err
 	}
@@ -82,59 +83,16 @@ func Run(args []string) error {
 		ffmpegBin:  ffmpegBin,
 		ffprobeBin: ffprobeBin,
 		cfg:        &cfg,
-		ignores:    ignore.Load(ignoresDir(target), "ac3", cfg.Ignores),
+		ignores:    ignore.Load(cli.IgnoresDir(target), "ac3", cfg.Ignores),
 		out:        os.Stdout,
 		guard:      run.NewTmpGuard(),
 	}
 	return t.runAll()
 }
 
-func resolveTarget(arg string) (string, error) {
-	target, err := filepath.Abs(arg)
-	if err != nil {
-		return "", fmt.Errorf("cannot resolve target: %w", err)
-	}
-	if resolved, linkErr := filepath.EvalSymlinks(target); linkErr == nil {
-		target = resolved
-	}
-	info, err := os.Stat(target)
-	if err != nil {
-		return "", fmt.Errorf("target %s does not exist", target)
-	}
-	if !info.IsDir() {
-		switch strings.ToLower(filepath.Ext(target)) {
-		case ".mkv", ".mp4":
-		default:
-			return "", fmt.Errorf("%s is neither a media file nor a directory", target)
-		}
-	}
-	return target, nil
-}
-
-func ignoresDir(target string) string {
-	if info, err := os.Stat(target); err == nil && !info.IsDir() {
-		return filepath.Dir(target)
-	}
-	return target
-}
-
-// cliIgnores adapts a comma-separated flag value into a string slice.
-type cliIgnores struct{ dst *[]string }
-
-func (v cliIgnores) String() string { return strings.Join(*v.dst, ",") }
-
-func (v cliIgnores) Set(s string) error {
-	for _, e := range strings.Split(s, ",") {
-		if e != "" {
-			*v.dst = append(*v.dst, e)
-		}
-	}
-	return nil
-}
-
 func (t *tool) runAll() error {
 	fmt.Fprintf(t.out, "FFmpeg binary : %s\n", t.ffmpegBin)
-	fmt.Fprintf(t.out, "Min AC3 valid : %d kbps\n", t.cfg.MinBR)
+	fmt.Fprintf(t.out, "Min AC3 valid : %d bit/s\n", t.cfg.MinBR)
 	if t.cfg.GateLang != "" {
 		fmt.Fprintf(t.out, "Language gate : %s\n", t.cfg.GateLang)
 	}
@@ -258,7 +216,7 @@ func (t *tool) processFile(path string) {
 	if t.cfg.DryRun {
 		fmt.Fprintf(t.out, "Would convert: %s (%s)\n", path, media.HumanBytes(srcSize))
 		for _, p := range toConvert {
-			fmt.Fprintf(t.out, "  - append AC3 640k for audio #%d (%s, lang '%s')\n", p.ordinal, p.codec, p.lang)
+			fmt.Fprintf(t.out, "  - append AC3 640k for audio #%d (%s, lang '%s')\n", p.ordinal, p.codec, media.LangDisplay(p.lang))
 		}
 		t.converted++
 		return
@@ -266,7 +224,7 @@ func (t *tool) processFile(path string) {
 
 	fmt.Fprintf(t.out, "Converting: %s (%s)\n", path, media.HumanBytes(srcSize))
 	for _, p := range toConvert {
-		fmt.Fprintf(t.out, "  - append AC3 640k for audio #%d (%s, lang '%s')\n", p.ordinal, p.codec, p.lang)
+		fmt.Fprintf(t.out, "  - append AC3 640k for audio #%d (%s, lang '%s')\n", p.ordinal, p.codec, media.LangDisplay(p.lang))
 	}
 
 	var fmtName string

@@ -10,11 +10,11 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 
+	"github.com/hranicka/media-tool/internal/cli"
 	"github.com/hranicka/media-tool/internal/ignore"
 	"github.com/hranicka/media-tool/internal/probe"
 	"github.com/hranicka/media-tool/internal/run"
@@ -42,7 +42,7 @@ func Run(args []string) error {
 	fs := flag.NewFlagSet("dup", flag.ExitOnError)
 	var cfg Config
 	var verbose bool
-	fs.Var(cliIgnores{&cfg.Ignores}, "i", "comma-separated substrings to ignore (also read from the dot ignore files)")
+	fs.Var(cli.Ignores{Dst: &cfg.Ignores}, "i", "comma-separated substrings to ignore (also read from the dot ignore files)")
 	fs.BoolVar(&verbose, "v", false, "verbose/debug output")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -54,16 +54,9 @@ func Run(args []string) error {
 		fmt.Fprintln(os.Stderr, "usage: media-tool dup [flags] <directory>")
 		return fmt.Errorf("dup needs exactly one directory argument")
 	}
-	dir, err := filepath.Abs(fs.Arg(0))
+	dir, err := cli.ResolveMediaTarget(fs.Arg(0), false)
 	if err != nil {
-		return fmt.Errorf("cannot resolve directory: %w", err)
-	}
-	if resolved, linkErr := filepath.EvalSymlinks(dir); linkErr == nil {
-		dir = resolved
-	}
-	info, err := os.Stat(dir)
-	if err != nil || !info.IsDir() {
-		return fmt.Errorf("directory %s does not exist", dir)
+		return err
 	}
 	cfg.Dir = dir
 
@@ -80,20 +73,6 @@ func Run(args []string) error {
 		out:        os.Stdout,
 	}
 	return t.runAll()
-}
-
-// cliIgnores adapts a comma-separated flag value into a string slice.
-type cliIgnores struct{ dst *[]string }
-
-func (v cliIgnores) String() string { return strings.Join(*v.dst, ",") }
-
-func (v cliIgnores) Set(s string) error {
-	for _, e := range strings.Split(s, ",") {
-		if e != "" {
-			*v.dst = append(*v.dst, e)
-		}
-	}
-	return nil
 }
 
 // trackKey identifies an audio track by its deciding properties.

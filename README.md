@@ -32,7 +32,7 @@ Run `media-tool <command> -h` for the full flag list of each command.
 
 ```
 media-tool convert [-p movie|camera|lowq|chromecast] [-e auto|nvenc|qsv|vaapi|x265]
-                   [-q cq] [-r height] [-i list] [-f] [-n] <dir>
+                   [-q cq] [-r height] [-vaapi_device dev] [-i list] [-f] [-n] <dir>
 ```
 
 - `movie` (default): CQ 26 quality target. `camera`: CQ 28, capped at ~65 %
@@ -72,8 +72,9 @@ media-tool ac3 [-b 448000] [-l lang] [-i list] [-n] <dir|file>
 For audio in DTS/TrueHD/FLAC without an AC3 track of the same language,
 appends an AC3 640k track (video and everything else copied). An existing
 AC3 track counts as "already converted" for its language unless it is a
-commentary track, below `-b`, or has an unknown bitrate with fewer than 6
-channels. E-AC3 is never converted (both playback targets decode it).
+commentary track, below `-b` (bit/s, so the default 448000 = 448 kbps), or
+has an unknown bitrate with fewer than 6 channels. E-AC3 is never converted
+(both playback targets decode it).
 
 ### dup
 
@@ -87,16 +88,16 @@ language tag within one file. Useful before `clean`.
 ### enhance
 
 ```
-media-tool enhance [-q 22] [-engine path] [-i list] [-n] <dir>
+media-tool enhance [-q 22] [-engine path] [-vaapi_device dev] [-i list] [-n] <dir>
 ```
 
 Extracts frames with hardware decoding, upscales them 2× with the
 Real-ESRGAN anime model (ncnn Vulkan) and encodes to HEVC 1080p
-(`scale=-2:1080`, aspect-preserving). Output:
-`<stem>_enhanced_1080p_hevc.mkv` next to the source. The engine binary is
-downloaded on first use to `~/.local/share/media-tool/` (override with
-`-engine` or `REALESRGAN_BIN`). Frame directories are cleaned on exit and
-on interrupt.
+(`scale=-2:1080`, aspect-preserving), written as MKV for both MKV and MP4
+inputs. Output: `<stem>_enhanced_1080p_hevc.mkv` next to the source. The
+engine binary is downloaded on first use to `~/.local/share/media-tool/`
+(override with `-engine` or `REALESRGAN_BIN`). Frame directories are
+cleaned on exit and on interrupt.
 
 ## Ignore files
 
@@ -116,9 +117,9 @@ target: the file's directory).
 
 ## Conventions
 
-- **`.old` backups**: every in-place replacement first checks that
-  `<file>.old` does not exist (the file is skipped when it does), then
-  keeps the original as `.old`.
+- **`.old` backups**: in-place replacements never clobber an existing
+  `<file>.old` — convert skips such files up front; clean and ac3 refuse
+  the swap and keep the original when one exists.
 - **Safety gates**: outputs are adopted only after duration, size and
   stream-count checks.
 - **Dry run**: every modifying command accepts `-n` and prints its plan.

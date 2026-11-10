@@ -1,4 +1,4 @@
-.PHONY: all install test build lint release-check
+.PHONY: all install test build lint fmt release-check
 
 STATICCHECK := $(shell command -v staticcheck 2>/dev/null || echo "$(shell go env GOPATH)/bin/staticcheck")
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)

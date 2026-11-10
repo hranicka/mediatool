@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/hranicka/media-tool/internal/backup"
+	"github.com/hranicka/media-tool/internal/cli"
 	"github.com/hranicka/media-tool/internal/gates"
 	"github.com/hranicka/media-tool/internal/ignore"
 	"github.com/hranicka/media-tool/internal/media"
@@ -51,7 +52,7 @@ func Run(args []string) error {
 	var verbose bool
 	fs.StringVar(&cfg.Langs, "l", "cs,en", "whitelist languages, comma separated (cs/en expand to their alias spellings)")
 	fs.BoolVar(&cfg.PurgeSole, "e", false, "purge even the only track of its type when its language is not whitelisted")
-	fs.Var(cliIgnores{&cfg.Ignores}, "i", "comma-separated substrings to ignore (also read from the dot ignore files)")
+	fs.Var(cli.Ignores{Dst: &cfg.Ignores}, "i", "comma-separated substrings to ignore (also read from the dot ignore files)")
 	fs.BoolVar(&cfg.DryRun, "n", false, "dry run: list what would be removed")
 	fs.BoolVar(&verbose, "v", false, "verbose/debug output")
 	if err := fs.Parse(args); err != nil {
@@ -64,7 +65,7 @@ func Run(args []string) error {
 		fmt.Fprintln(os.Stderr, "usage: media-tool clean [flags] <directory|file>")
 		return fmt.Errorf("clean needs exactly one directory or file argument")
 	}
-	target, err := resolveTarget(fs.Arg(0))
+	target, err := cli.ResolveMediaTarget(fs.Arg(0), true)
 	if err != nil {
 		return err
 	}
@@ -81,56 +82,11 @@ func Run(args []string) error {
 		ffprobeBin: ffprobeBin,
 		cfg:        &cfg,
 		whitelist:  media.ExpandWhitelist(strings.Split(cfg.Langs, ",")),
-		ignores:    ignore.Load(ignoresDir(target), "clean", cfg.Ignores),
+		ignores:    ignore.Load(cli.IgnoresDir(target), "clean", cfg.Ignores),
 		out:        os.Stdout,
 		guard:      run.NewTmpGuard(),
 	}
 	return t.runAll()
-}
-
-func resolveTarget(arg string) (string, error) {
-	target, err := filepath.Abs(arg)
-	if err != nil {
-		return "", fmt.Errorf("cannot resolve target: %w", err)
-	}
-	if resolved, linkErr := filepath.EvalSymlinks(target); linkErr == nil {
-		target = resolved
-	}
-	info, err := os.Stat(target)
-	if err != nil {
-		return "", fmt.Errorf("target %s does not exist", target)
-	}
-	if !info.IsDir() {
-		switch strings.ToLower(filepath.Ext(target)) {
-		case ".mkv", ".mp4":
-		default:
-			return "", fmt.Errorf("%s is neither a media file nor a directory", target)
-		}
-	}
-	return target, nil
-}
-
-// ignoresDir returns the directory whose dot ignore files govern the target:
-// the target's own directory for a single file.
-func ignoresDir(target string) string {
-	if info, err := os.Stat(target); err == nil && !info.IsDir() {
-		return filepath.Dir(target)
-	}
-	return target
-}
-
-// cliIgnores adapts a comma-separated flag value into a string slice.
-type cliIgnores struct{ dst *[]string }
-
-func (v cliIgnores) String() string { return strings.Join(*v.dst, ",") }
-
-func (v cliIgnores) Set(s string) error {
-	for _, e := range strings.Split(s, ",") {
-		if e != "" {
-			*v.dst = append(*v.dst, e)
-		}
-	}
-	return nil
 }
 
 // counts tallies real video (non-cover-art), audio and subtitle streams.
@@ -235,11 +191,11 @@ func (t *tool) processFile(path string) {
 			continue
 		}
 		if src.audio == 1 && !t.cfg.PurgeSole {
-			plan = append(plan, fmt.Sprintf("keep audio #%d (%s, lang '%s') - sole audio track", ta.Ordinal, ta.Stream.CodecName, lang))
+			plan = append(plan, fmt.Sprintf("keep audio #%d (%s, lang '%s') - sole audio track", ta.Ordinal, ta.Stream.CodecName, media.LangDisplay(lang)))
 			continue
 		}
 		removeArgs = append(removeArgs, "-map", fmt.Sprintf("-0:a:%d", ta.Ordinal))
-		plan = append(plan, fmt.Sprintf("remove audio #%d (%s, lang '%s')", ta.Ordinal, ta.Stream.CodecName, lang))
+		plan = append(plan, fmt.Sprintf("remove audio #%d (%s, lang '%s')", ta.Ordinal, ta.Stream.CodecName, media.LangDisplay(lang)))
 		keep.audio--
 	}
 	for _, ts := range info.ByType()[probe.TypeSubtitle] {
@@ -248,11 +204,11 @@ func (t *tool) processFile(path string) {
 			continue
 		}
 		if src.subtitle == 1 && !t.cfg.PurgeSole {
-			plan = append(plan, fmt.Sprintf("keep subtitle #%d (%s, lang '%s') - sole subtitle track", ts.Ordinal, ts.Stream.CodecName, lang))
+			plan = append(plan, fmt.Sprintf("keep subtitle #%d (%s, lang '%s') - sole subtitle track", ts.Ordinal, ts.Stream.CodecName, media.LangDisplay(lang)))
 			continue
 		}
 		removeArgs = append(removeArgs, "-map", fmt.Sprintf("-0:s:%d", ts.Ordinal))
-		plan = append(plan, fmt.Sprintf("remove subtitle #%d (%s, lang '%s')", ts.Ordinal, ts.Stream.CodecName, lang))
+		plan = append(plan, fmt.Sprintf("remove subtitle #%d (%s, lang '%s')", ts.Ordinal, ts.Stream.CodecName, media.LangDisplay(lang)))
 		keep.subtitle--
 	}
 

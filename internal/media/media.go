@@ -63,6 +63,15 @@ func IsCoverArt(s probe.Stream) bool {
 	return s.Disposition.AttachedPic == 1
 }
 
+// LangDisplay renders a language tag for human-readable plan lines
+// (untagged tracks show as "none", bash parity).
+func LangDisplay(tag string) string {
+	if tag == "" {
+		return "none"
+	}
+	return tag
+}
+
 // HumanBytes formats a byte count in IEC units (1024 base), mirroring
 // numfmt --to=iec ("98K", "1.5G").
 func HumanBytes(n int64) string {

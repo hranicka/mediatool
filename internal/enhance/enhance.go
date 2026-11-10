@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/hranicka/media-tool/internal/cli"
 	"github.com/hranicka/media-tool/internal/encoders"
 	"github.com/hranicka/media-tool/internal/ignore"
 	"github.com/hranicka/media-tool/internal/media"
@@ -61,7 +62,7 @@ func Run(args []string) error {
 	fs.IntVar(&cfg.CQ, "q", 22, "CQ quality value for the HEVC encode")
 	fs.StringVar(&cfg.EngineFlag, "engine", "", "path to the realesrgan-ncnn-vulkan binary (default: $REALESRGAN_BIN, else auto-downloaded)")
 	fs.StringVar(&cfg.VaapiDevice, "vaapi_device", "/dev/dri/renderD128", "VAAPI render device")
-	fs.Var(cliIgnores{&cfg.Ignores}, "i", "comma-separated substrings to ignore (also read from the dot ignore files)")
+	fs.Var(cli.Ignores{Dst: &cfg.Ignores}, "i", "comma-separated substrings to ignore (also read from the dot ignore files)")
 	fs.BoolVar(&cfg.DryRun, "n", false, "dry run: only list what would be enhanced")
 	fs.BoolVar(&verbose, "v", false, "verbose/debug output")
 	if err := fs.Parse(args); err != nil {
@@ -74,16 +75,9 @@ func Run(args []string) error {
 		fmt.Fprintln(os.Stderr, "usage: media-tool enhance [flags] <directory>")
 		return fmt.Errorf("enhance needs exactly one directory argument")
 	}
-	dir, err := filepath.Abs(fs.Arg(0))
+	dir, err := cli.ResolveMediaTarget(fs.Arg(0), false)
 	if err != nil {
-		return fmt.Errorf("cannot resolve directory: %w", err)
-	}
-	if resolved, linkErr := filepath.EvalSymlinks(dir); linkErr == nil {
-		dir = resolved
-	}
-	info, err := os.Stat(dir)
-	if err != nil || !info.IsDir() {
-		return fmt.Errorf("directory %s does not exist", dir)
+		return err
 	}
 	cfg.Dir = dir
 
@@ -240,20 +234,6 @@ func extractZipEntry(f *zip.File, dest string) error {
 	return err
 }
 
-// cliIgnores adapts a comma-separated flag value into a string slice.
-type cliIgnores struct{ dst *[]string }
-
-func (v cliIgnores) String() string { return strings.Join(*v.dst, ",") }
-
-func (v cliIgnores) Set(s string) error {
-	for _, e := range strings.Split(s, ",") {
-		if e != "" {
-			*v.dst = append(*v.dst, e)
-		}
-	}
-	return nil
-}
-
 func (t *tool) runAll() error {
 	fmt.Fprintf(t.out, "FFmpeg binary : %s\n", t.ffmpegBin)
 	fmt.Fprintf(t.out, "Engine        : %s\n", t.enginePath)
@@ -368,10 +348,12 @@ func (t *tool) processFile(path string) {
 		t.failed++
 		return
 	}
-	encodeArgs := []string{"-hide_banner", "-loglevel", "error", "-stats", "-nostdin", "-y",
+	encodeArgs := []string{"-hide_banner", "-loglevel", "error", "-stats", "-nostdin", "-y"}
+	encodeArgs = append(encodeArgs, t.enc.InputArgs(t.cfg.VaapiDevice)...)
+	encodeArgs = append(encodeArgs,
 		"-hwaccel", "auto", "-framerate", framerate, "-i", filepath.Join(frameOut, "frame_%08d.png"), "-i", path,
 		"-map", "0:v:0", "-map", "1:a?", "-map", "1:s?",
-		"-vf", mergeFilters(t.enc)}
+		"-vf", mergeFilters(t.enc))
 	encodeArgs = append(encodeArgs, t.enc.VideoArgs(encoders.ModeMovie, t.cfg.CQ, 0)...)
 	encodeArgs = append(encodeArgs, "-c:a", "copy", "-c:s", "copy", outPath)
 	if _, err := t.r.Stream(t.ffmpegBin, encodeArgs...); err != nil {
