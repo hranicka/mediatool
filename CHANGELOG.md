@@ -7,6 +7,8 @@
   stays the default; chromecast mode rejects AV1 (Chromecast 4 devices
   decode HEVC only). The `-e` software encoder value is now `sw` (`x265`
   remains as a deprecated alias).
+- `convert`: VC-1 sources (`vc1`, including `wmv3`) now convert without
+  `-f`, like H.264 sources.
 - Dot ignore files are honored along the whole target path: the search
   walks from the target directory up to the filesystem root (like a flat
   gitignore hierarchy), so an ignore file in `/foo` or `/foo/bar` also

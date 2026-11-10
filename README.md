@@ -44,6 +44,8 @@ mediatool convert [-p movie|camera|lowq|chromecast] [-c hevc|av1] [-e auto|nvenc
   the default output. Chromecast mode is HEVC-only (the target device
   decodes HEVC). GPUs without AV1 hardware encode (e.g. the Intel N100)
   fall back to slow software encoding.
+- Sources: H.264 and VC-1 (`vc1`, including `wmv3`) convert without
+  flags; anything else needs `-f`.
 - HDR10/HLG color metadata is preserved (p010 for 10-bit); Dolby Vision
   sources are skipped (`-f` forces, losing the DV layer); HDR10+ dynamic
   metadata is dropped (static HDR10 stays).

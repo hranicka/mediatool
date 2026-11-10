@@ -300,12 +300,40 @@ func TestConvertCodecGuard(t *testing.T) {
 	if tl.skipped != 1 || len(ff.encCalls) != 0 {
 		t.Errorf("non-h264 must be skipped: %+v out=%s", tl, out.String())
 	}
+	if !strings.Contains(out.String(), "not convertible (want h264 or vc1)") {
+		t.Errorf("skip reason missing: %s", out.String())
+	}
 
 	cfg.Force = true
 	tl2 := newTestTool(t, dir, ff, cfg, out)
 	tl2.processFile(src)
 	if tl2.converted != 1 {
 		t.Errorf("forced non-h264 must convert: %+v", tl2)
+	}
+}
+
+func TestConvertVC1Sources(t *testing.T) {
+	// vc1 (advanced profile) and wmv3 (simple/main profile) form the SMPTE
+	// VC-1 family; both convert without -f like h264 sources
+	for _, codec := range []string{"vc1", "wmv3"} {
+		t.Run(codec, func(t *testing.T) {
+			dir := t.TempDir()
+			src := filepath.Join(dir, "rip.mkv")
+			writeFile(t, src, 1000)
+
+			ff := &fakeFF{probeFor: func(src string) (string, bool) {
+				if strings.HasSuffix(filepath.Base(src), ".tmp") {
+					return jsonFor(600.0)(src)
+				}
+				return videoJSON(codec, "yuv420p", ""), true
+			}, encSize: 1}
+			out := &bytes.Buffer{}
+			tl := newTestTool(t, dir, ff, &Config{Dir: dir, Mode: encoders.ModeMovie, CQ: 26}, out)
+			tl.processFile(src)
+			if tl.converted != 1 {
+				t.Errorf("%s source must convert without force: %+v out=%s", codec, tl, out.String())
+			}
+		})
 	}
 }
 

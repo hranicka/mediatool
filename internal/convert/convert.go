@@ -202,6 +202,17 @@ func codecModeGuard(c encoders.Codec, m encoders.Mode) error {
 	return nil
 }
 
+// convertibleSource reports whether a video codec is a standard convert
+// source without -f; vc1 and wmv3 are the SMPTE VC-1 family (advanced vs
+// simple/main profile) and convert like h264.
+func convertibleSource(codec string) bool {
+	switch codec {
+	case "h264", "vc1", "wmv3":
+		return true
+	}
+	return false
+}
+
 func (t *tool) runAll() error {
 	cfg := t.cfg
 	cqNote := ""
@@ -333,11 +344,11 @@ func (t *tool) processFile(path string) {
 			t.skip("backup %s already exists", backupPath, path)
 			return
 		}
-		if v.CodecName != "h264" && !cfg.Force {
-			t.skip("video codec is '%s', not h264", v.CodecName, path)
+		if !convertibleSource(v.CodecName) && !cfg.Force {
+			t.skip("video codec is '%s', not convertible (want h264 or vc1)", v.CodecName, path)
 			return
 		}
-		if v.CodecName != "h264" {
+		if !convertibleSource(v.CodecName) {
 			fmt.Fprintf(t.out, "Forcing re-encode of %s source: %s\n", v.CodecName, path)
 		}
 		outPath = path
