@@ -768,3 +768,97 @@ func TestSourceVideoKbpsTiers(t *testing.T) {
 		t.Errorf("no-data case: got %d, want 0", got)
 	}
 }
+
+// TestPlainOutputGolden pins the exact non-interactive output of runAll:
+// the ui reporter must keep redirected output byte-identical.
+func TestPlainOutputGolden(t *testing.T) {
+	// scenario returns a fresh tree per subtest: the real run leaves a
+	// good.mkv.old backup that would trip the dry run's backup guard
+	scenario := func(t *testing.T) (dir string, good, ignored, skip string, ff *fakeFF, cfg *Config) {
+		dir = t.TempDir()
+		good = filepath.Join(dir, "good.mkv")
+		ignored = filepath.Join(dir, "ignore-me.mkv")
+		skip = filepath.Join(dir, "skip.mkv")
+		writeFile(t, good, 1000)
+		writeFile(t, ignored, 100)
+		writeFile(t, skip, 100)
+
+		hevcSrc := videoJSON("hevc", "yuv420p", "")
+		ff = &fakeFF{
+			probeFor: func(src string) (string, bool) {
+				if strings.HasSuffix(filepath.Base(src), ".tmp") {
+					return jsonFor(600.0)(src)
+				}
+				if filepath.Base(src) == "skip.mkv" {
+					return hevcSrc, true
+				}
+				return h264JSON, true
+			},
+			encSize: 500,
+		}
+		cfg = &Config{Dir: dir, Preset: "movie", Mode: encoders.ModeMovie, Codec: encoders.CodecHEVC, CQ: 26, Ignores: []string{"ignore-me"}}
+		return dir, good, ignored, skip, ff, cfg
+	}
+
+	t.Run("real run", func(t *testing.T) {
+		dir, good, ignored, skip, ff, cfg := scenario(t)
+		out := &bytes.Buffer{}
+		tl := newTestTool(t, dir, ff, cfg, out)
+		if err := tl.runAll(); err != nil {
+			t.Fatalf("runAll: %v", err)
+		}
+		want := strings.Join([]string{
+			"FFmpeg binary : ffmpeg",
+			"Using encoder : Nvidia NVENC (quality value: 26)",
+			"Output codec  : hevc",
+			"Preset        : movie",
+			"Audio target  : copy",
+			"Target        : " + dir,
+			"Ignore entries: 1",
+			strings.Repeat("=", 42),
+			"Processing: " + good + " (1000)",
+			"  plan: CQ 26 quality target",
+			"  encoding with Nvidia NVENC (attempt 1/3: hw decode, subtitles copied)...",
+			"Converted: " + good + " (1000 -> 500, backup: " + good + ".old)",
+			"Skipping (ignored): " + ignored,
+			"Skipping (video codec is 'hevc', not convertible (want h264 or vc1)): " + skip,
+			strings.Repeat("=", 42),
+			"Done. Converted: 1, skipped: 1, failed: 0.",
+			"",
+		}, "\n")
+		if got := out.String(); got != want {
+			t.Errorf("plain output drifted:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+		}
+	})
+
+	t.Run("dry run", func(t *testing.T) {
+		dir, good, ignored, skip, ff, cfg := scenario(t)
+		out := &bytes.Buffer{}
+		dry := *cfg
+		dry.DryRun = true
+		tl := newTestTool(t, dir, ff, &dry, out)
+		if err := tl.runAll(); err != nil {
+			t.Fatalf("runAll: %v", err)
+		}
+		want := strings.Join([]string{
+			"FFmpeg binary : ffmpeg",
+			"Using encoder : Nvidia NVENC (quality value: 26)",
+			"Output codec  : hevc",
+			"Preset        : movie",
+			"Audio target  : copy",
+			"Target        : " + dir,
+			"Ignore entries: 1",
+			"Extra         : DRY RUN",
+			strings.Repeat("=", 42),
+			"Would convert: " + good + " (1000, CQ 26 quality target)",
+			"Skipping (ignored): " + ignored,
+			"Skipping (video codec is 'hevc', not convertible (want h264 or vc1)): " + skip,
+			strings.Repeat("=", 42),
+			"Done. Converted: 1, skipped: 1, failed: 0.",
+			"",
+		}, "\n")
+		if got := out.String(); got != want {
+			t.Errorf("plain dry-run output drifted:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+		}
+	})
+}
