@@ -8,12 +8,13 @@ package ac3
 import (
 	"flag"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/hranicka/mediatool/internal/backup"
 	"github.com/hranicka/mediatool/internal/cli"
@@ -22,6 +23,7 @@ import (
 	"github.com/hranicka/mediatool/internal/media"
 	"github.com/hranicka/mediatool/internal/probe"
 	"github.com/hranicka/mediatool/internal/run"
+	"github.com/hranicka/mediatool/internal/ui"
 	"github.com/hranicka/mediatool/internal/walk"
 )
 
@@ -32,6 +34,7 @@ type Config struct {
 	GateLang string
 	Ignores  []string
 	DryRun   bool
+	Verbose  bool
 }
 
 type tool struct {
@@ -40,10 +43,20 @@ type tool struct {
 	ffprobeBin string
 	cfg        *Config
 	ignores    ignore.List
-	out        io.Writer
+	rep        *ui.Reporter
 	guard      *run.TmpGuard
 
 	converted, untouched, failed int
+	bytesIn, bytesOut            int64
+	failures                     []ui.Failure
+}
+
+// fail renders the standard "Error: ..." line and records the failure for
+// the summary.
+func (t *tool) fail(path, msg string) {
+	t.rep.Fail(msg, "")
+	t.failures = append(t.failures, ui.Failure{Path: path, Msg: msg})
+	t.failed++
 }
 
 // Run executes the ac3 subcommand.
@@ -62,6 +75,7 @@ func Run(args []string) error {
 	if verbose {
 		slog.SetLogLoggerLevel(slog.LevelDebug)
 	}
+	cfg.Verbose = verbose
 	if fs.NArg() != 1 {
 		fmt.Fprintln(os.Stderr, "usage: mediatool ac3 [flags] <directory|file>")
 		return fmt.Errorf("ac3 needs exactly one directory or file argument")
@@ -79,8 +93,9 @@ func Run(args []string) error {
 	}
 
 	ignores, warnings := ignore.Load(cli.IgnoresDir(target), "ac3", cfg.Ignores)
+	rep := ui.New(os.Stdout, ui.Detect(os.Stdout, os.Stderr))
 	for _, w := range warnings {
-		fmt.Fprintln(os.Stdout, "warning:", w)
+		rep.Raw(ui.WarnTone, "warning: %s\n", w)
 	}
 
 	t := &tool{
@@ -89,24 +104,27 @@ func Run(args []string) error {
 		ffprobeBin: ffprobeBin,
 		cfg:        &cfg,
 		ignores:    ignores,
-		out:        os.Stdout,
+		rep:        rep,
 		guard:      run.NewTmpGuard(),
 	}
 	return t.runAll()
 }
 
 func (t *tool) runAll() error {
-	fmt.Fprintf(t.out, "FFmpeg binary : %s\n", t.ffmpegBin)
-	fmt.Fprintf(t.out, "Min AC3 valid : %d bit/s\n", t.cfg.MinBR)
+	kvs := []ui.KV{
+		ui.Pair("FFmpeg binary", t.ffmpegBin),
+		ui.Pair("Min AC3 valid", fmt.Sprintf("%d bit/s", t.cfg.MinBR)),
+	}
 	if t.cfg.GateLang != "" {
-		fmt.Fprintf(t.out, "Language gate : %s\n", t.cfg.GateLang)
+		kvs = append(kvs, ui.Pair("Language gate", t.cfg.GateLang))
 	}
-	fmt.Fprintf(t.out, "Ignore entries: %d\n", t.ignores.Len())
+	kvs = append(kvs, ui.Pair("Ignore entries", strconv.Itoa(t.ignores.Len())))
 	if t.cfg.DryRun {
-		fmt.Fprintf(t.out, "Extra         : DRY RUN\n")
+		kvs = append(kvs, ui.Pair("Extra", "DRY RUN"))
 	}
-	fmt.Fprintln(t.out, "==========================================")
+	t.rep.Header(kvs)
 
+	start := time.Now()
 	target := t.cfg.Target
 	info, err := os.Stat(target)
 	if err != nil {
@@ -117,21 +135,29 @@ func (t *tool) runAll() error {
 		if err != nil {
 			return err
 		}
-		for _, path := range files {
+		t.rep.Found(len(files))
+		for i, path := range files {
 			if t.ignores.Match(path) {
-				fmt.Fprintf(t.out, "Skipping (ignored): %s\n", path)
+				t.rep.Skip(i+1, len(files), path, "ignored")
 				continue
 			}
-			t.processFile(path)
+			t.processFile(i+1, len(files), path)
 		}
 	} else if t.ignores.Match(target) {
-		fmt.Fprintf(t.out, "Skipping (ignored): %s\n", target)
+		t.rep.Skip(1, 1, target, "ignored")
 	} else {
-		t.processFile(target)
+		t.processFile(1, 1, target)
 	}
 
-	fmt.Fprintln(t.out, "==========================================")
-	fmt.Fprintf(t.out, "Done. Converted: %d, untouched: %d, failed: %d.\n", t.converted, t.untouched, t.failed)
+	t.rep.Summary("Done.", "Converted", "untouched", ui.Outcome{
+		Done:     t.converted,
+		Skipped:  t.untouched,
+		Failed:   t.failed,
+		BytesIn:  t.bytesIn,
+		BytesOut: t.bytesOut,
+		Failures: t.failures,
+		Elapsed:  time.Since(start),
+	})
 	if t.failed > 0 {
 		return fmt.Errorf("%d file(s) failed", t.failed)
 	}
@@ -211,10 +237,10 @@ func CountTracks(info *probe.Info) (total, ac3 int) {
 	return total, ac3
 }
 
-func (t *tool) processFile(path string) {
+func (t *tool) processFile(i, n int, path string) {
 	info, err := probe.Probe(t.r, t.ffprobeBin, path)
 	if err != nil {
-		fmt.Fprintf(t.out, "Skipping (cannot probe: %v): %s\n", err, path)
+		t.rep.Skip(i, n, path, fmt.Sprintf("cannot probe: %v", err))
 		t.untouched++
 		return
 	}
@@ -229,7 +255,7 @@ func (t *tool) processFile(path string) {
 			}
 		}
 		if !hasGate {
-			fmt.Fprintf(t.out, "Skipping (no '%s' audio track): %s\n", t.cfg.GateLang, path)
+			t.rep.Skip(i, n, path, fmt.Sprintf("no '%s' audio track", t.cfg.GateLang))
 			t.untouched++
 			return
 		}
@@ -239,7 +265,7 @@ func (t *tool) processFile(path string) {
 	// AC3 track need a compatibility copy (see PlanCompat for the rules)
 	toConvert := PlanCompat(info, t.cfg.MinBR)
 	if len(toConvert) == 0 {
-		fmt.Fprintf(t.out, "OK (nothing to convert): %s\n", path)
+		t.rep.OK(i, n, path, "nothing to convert")
 		t.untouched++
 		return
 	}
@@ -252,19 +278,23 @@ func (t *tool) processFile(path string) {
 		srcSize = st.Size()
 	}
 
+	trackLines := make([]string, 0, len(toConvert))
+	for _, p := range toConvert {
+		trackLines = append(trackLines, fmt.Sprintf("append AC3 640k for audio #%d (%s, lang '%s')", p.Ordinal, p.Codec, media.LangDisplay(p.Lang)))
+	}
+
 	if t.cfg.DryRun {
-		fmt.Fprintf(t.out, "Would convert: %s (%s)\n", path, media.HumanBytes(srcSize))
-		for _, p := range toConvert {
-			fmt.Fprintf(t.out, "  - append AC3 640k for audio #%d (%s, lang '%s')\n", p.Ordinal, p.Codec, media.LangDisplay(p.Lang))
-		}
+		t.rep.Would("Would convert", i, n, path, media.HumanBytes(srcSize), trackLines...)
 		t.converted++
 		return
 	}
 
-	fmt.Fprintf(t.out, "Converting: %s (%s)\n", path, media.HumanBytes(srcSize))
-	for _, p := range toConvert {
-		fmt.Fprintf(t.out, "  - append AC3 640k for audio #%d (%s, lang '%s')\n", p.Ordinal, p.Codec, media.LangDisplay(p.Lang))
+	srcDur := time.Duration(0)
+	if d, ok := info.Duration(); ok {
+		srcDur = time.Duration(d * float64(time.Second))
 	}
+	fileStart := time.Now()
+	t.rep.Start("Converting", i, n, path, media.HumanBytes(srcSize), srcDur, trackLines...)
 
 	var fmtName string
 	switch strings.ToLower(filepath.Ext(path)) {
@@ -298,9 +328,12 @@ func (t *tool) processFile(path string) {
 			fmt.Sprintf("-c:a:%d", out), "ac3", fmt.Sprintf("-b:a:%d", out), "640k")
 	}
 	args = append(args, "-c:s", "copy", "-c:d", "copy", "-max_muxing_queue_size", "4096", "-f", fmtName, tmp)
-	if _, err := t.r.Stream(t.ffmpegBin, args...); err != nil {
-		fmt.Fprintf(t.out, "Error: failed to convert %s (left untouched)\n", path)
-		t.failed++
+	var onStats func(elapsed time.Duration, speed string)
+	if t.rep.Interactive() && !t.cfg.Verbose {
+		onStats = t.rep.Progress
+	}
+	if _, err := run.StreamProgress(t.r, t.ffmpegBin, onStats, args...); err != nil {
+		t.fail(path, fmt.Sprintf("failed to convert %s (left untouched)", path))
 		return
 	}
 
@@ -309,15 +342,16 @@ func (t *tool) processFile(path string) {
 	}
 
 	if _, err := backup.Swap(path, tmp); err != nil {
-		fmt.Fprintf(t.out, "Error: %v\n", err)
-		t.failed++
+		t.fail(path, err.Error())
 		return
 	}
 	newSize := int64(0)
 	if st, err := os.Stat(path); err == nil {
 		newSize = st.Size()
 	}
-	fmt.Fprintf(t.out, "Converted: %s (%s -> %s, backup: %s.old)\n", path, media.HumanBytes(srcSize), media.HumanBytes(newSize), path)
+	t.rep.Success("Converted", path, srcSize, newSize, true, time.Since(fileStart))
+	t.bytesIn += srcSize
+	t.bytesOut += newSize
 	t.converted++
 }
 
@@ -326,21 +360,18 @@ func (t *tool) processFile(path string) {
 func (t *tool) gatesPass(path, tmp string, info *probe.Info, srcTotal, srcAc3, appended int) bool {
 	newInfo, err := probe.Probe(t.r, t.ffprobeBin, tmp)
 	if err != nil {
-		fmt.Fprintf(t.out, "Error: cannot probe the output: %v\n", err)
-		t.failed++
+		t.fail(path, fmt.Sprintf("cannot probe the output: %v", err))
 		return false
 	}
 	newTotal, newAc3 := CountTracks(newInfo)
 	if newTotal != srcTotal+appended || newAc3 != srcAc3+appended {
-		fmt.Fprintf(t.out, "Error: output does not match the plan (audio %d/%d, ac3 %d/%d) - keeping original\n",
-			newTotal, srcTotal+appended, newAc3, srcAc3+appended)
-		t.failed++
+		t.fail(path, fmt.Sprintf("output does not match the plan (audio %d/%d, ac3 %d/%d) - keeping original",
+			newTotal, srcTotal+appended, newAc3, srcAc3+appended))
 		return false
 	}
 	if srcDur, ok1 := info.Duration(); ok1 {
 		if newDur, ok2 := newInfo.Duration(); ok2 && !gates.DurationKept(newDur, srcDur, 0.99) {
-			fmt.Fprintf(t.out, "Error: output (%.3fs) is much shorter than source (%.3fs) - keeping original\n", newDur, srcDur)
-			t.failed++
+			t.fail(path, fmt.Sprintf("output (%.3fs) is much shorter than source (%.3fs) - keeping original", newDur, srcDur))
 			return false
 		}
 	}

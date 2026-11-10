@@ -11,6 +11,7 @@ import (
 	"github.com/hranicka/mediatool/internal/ignore"
 	"github.com/hranicka/mediatool/internal/probe"
 	"github.com/hranicka/mediatool/internal/run"
+	"github.com/hranicka/mediatool/internal/ui"
 )
 
 type fakeFF struct {
@@ -98,7 +99,7 @@ func newTestTool(t *testing.T, dir string, ff run.Runner, cfg *Config, out *byte
 		ffprobeBin: "ffprobe",
 		cfg:        cfg,
 		ignores:    mustIgnore(dir, "ac3", cfg.Ignores),
-		out:        out,
+		rep:        ui.New(out, ui.Profile{}),
 		guard:      &run.TmpGuard{},
 	}
 }
@@ -139,7 +140,7 @@ func TestAC3HappyPath(t *testing.T) {
 	}, encSize: 1_200_000}
 	out := &bytes.Buffer{}
 	tl := newTestTool(t, dir, ff, &Config{Target: dir, MinBR: 448000}, out)
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 
 	if tl.converted != 1 {
 		t.Fatalf("converted: %+v out=%s", tl, out.String())
@@ -172,7 +173,7 @@ func TestAC3ValidTrackSkips(t *testing.T) {
 	ff := &fakeFF{probeFor: func(string) (string, bool) { return validJSON, true }}
 	out := &bytes.Buffer{}
 	tl := newTestTool(t, dir, ff, &Config{Target: dir, MinBR: 448000}, out)
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 
 	if tl.untouched != 1 || !strings.Contains(out.String(), "OK (nothing to convert)") {
 		t.Errorf("valid AC3 must skip conversion: %+v out=%s", tl, out.String())
@@ -194,7 +195,7 @@ func TestAC3LowBitrateInvalid(t *testing.T) {
 		return lowJSON, true
 	}, encSize: 1}
 	tl := newTestTool(t, dir, ff, &Config{Target: dir, MinBR: 448000}, &bytes.Buffer{})
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 
 	if tl.converted != 1 {
 		t.Fatalf("low-bitrate AC3 must not count as valid: %+v", tl)
@@ -213,7 +214,7 @@ func TestAC3Gate(t *testing.T) {
 	ff := &fakeFF{probeFor: func(string) (string, bool) { return mixedJSON(), true }}
 	out := &bytes.Buffer{}
 	tl := newTestTool(t, dir, ff, &Config{Target: dir, MinBR: 448000, GateLang: "rus"}, out)
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 
 	if tl.untouched != 1 || !strings.Contains(out.String(), "no 'rus' audio track") {
 		t.Errorf("language gate must skip: %+v out=%s", tl, out.String())
@@ -231,7 +232,7 @@ func TestAC3EAC3NeverConverted(t *testing.T) {
 	ff := &fakeFF{probeFor: func(string) (string, bool) { return eac3JSON, true }}
 	out := &bytes.Buffer{}
 	tl := newTestTool(t, dir, ff, &Config{Target: dir, MinBR: 448000}, out)
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 
 	if tl.untouched != 1 || !strings.Contains(out.String(), "OK (nothing to convert)") {
 		t.Errorf("E-AC3 must never be converted: %+v out=%s", tl, out.String())
@@ -246,7 +247,7 @@ func TestAC3DryRun(t *testing.T) {
 	ff := &fakeFF{probeFor: func(string) (string, bool) { return mixedJSON(), true }}
 	out := &bytes.Buffer{}
 	tl := newTestTool(t, dir, ff, &Config{Target: dir, MinBR: 448000, DryRun: true}, out)
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 
 	if tl.converted != 1 || len(ff.encodeLog) != 0 {
 		t.Fatalf("dry run must not encode: %+v", tl)
@@ -275,7 +276,7 @@ func TestAC3CountGate(t *testing.T) {
 	}, encSize: 1}
 	out := &bytes.Buffer{}
 	tl := newTestTool(t, dir, ff, &Config{Target: dir, MinBR: 448000}, out)
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 
 	if tl.failed != 1 || !strings.Contains(out.String(), "does not match the plan") {
 		t.Errorf("count gate must reject: %+v out=%s", tl, out.String())
