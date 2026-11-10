@@ -62,10 +62,10 @@ func (f *fakeFF) defaultStream(args []string) ([]byte, error) {
 
 func videoJSON(codec, pixFmt, extra string) string {
 	return fmt.Sprintf(`{"streams":[%s],"format":{"duration":"600.0","size":"1000000","bit_rate":"8000000"}}`,
-		fmt.Sprintf(`{"index":0,"codec_name":"%s","codec_type":"video","pix_fmt":"%s","width":1920,"height":1080,"bit_rate":"8000000","disposition":{"attached_pic":0},"color_primaries":"unknown","color_trc":"unknown","color_space":"unknown"%s}`, codec, pixFmt, extra))
+		fmt.Sprintf(`{"index":0,"codec_name":"%s","codec_type":"video","pix_fmt":"%s","width":1920,"height":1080,"bit_rate":"8000000","disposition":{"attached_pic":0},"color_primaries":"unknown","color_transfer":"unknown","color_space":"unknown"%s}`, codec, pixFmt, extra))
 }
 
-const h264JSON = `{"streams":[{"index":0,"codec_name":"h264","codec_type":"video","pix_fmt":"yuv420p","width":1920,"height":1080,"bit_rate":"8000000","disposition":{"attached_pic":0},"color_primaries":"unknown","color_trc":"unknown","color_space":"unknown"}],"format":{"duration":"600.0","size":"1000000","bit_rate":"8000000"}}`
+const h264JSON = `{"streams":[{"index":0,"codec_name":"h264","codec_type":"video","pix_fmt":"yuv420p","width":1920,"height":1080,"bit_rate":"8000000","disposition":{"attached_pic":0},"color_primaries":"unknown","color_transfer":"unknown","color_space":"unknown"}],"format":{"duration":"600.0","size":"1000000","bit_rate":"8000000"}}`
 
 // jsonFor responds with h264JSON for the source and the given duration for
 // the temp output.
@@ -483,8 +483,8 @@ func TestConvertColorArgs(t *testing.T) {
 	writeFile(t, src, 1_000_000)
 
 	hdrJSON := strings.Replace(h264JSON,
-		`"color_primaries":"unknown","color_trc":"unknown","color_space":"unknown"`,
-		`"color_primaries":"bt2020","color_trc":"smpte2084","color_space":"bt2020nc","pix_fmt":"yuv420p10le"`, 1)
+		`"color_primaries":"unknown","color_transfer":"unknown","color_space":"unknown"`,
+		`"color_primaries":"bt2020","color_transfer":"smpte2084","color_space":"bt2020nc","pix_fmt":"yuv420p10le"`, 1)
 	ff := &fakeFF{probeFor: func(src string) (string, bool) {
 		if strings.HasSuffix(filepath.Base(src), ".tmp") {
 			return jsonFor(600.0)(src)
@@ -643,8 +643,8 @@ func TestConvertVAAPIEncode(t *testing.T) {
 
 	// 10-bit HDR source: vaapi uploads p010 frames, never -pix_fmt
 	hdrJSON := strings.Replace(h264JSON,
-		`"color_primaries":"unknown","color_trc":"unknown","color_space":"unknown"`,
-		`"color_primaries":"bt2020","color_trc":"smpte2084","color_space":"bt2020nc","pix_fmt":"yuv420p10le"`, 1)
+		`"color_primaries":"unknown","color_transfer":"unknown","color_space":"unknown"`,
+		`"color_primaries":"bt2020","color_transfer":"smpte2084","color_space":"bt2020nc","pix_fmt":"yuv420p10le"`, 1)
 	ff := &fakeFF{probeFor: func(src string) (string, bool) {
 		if strings.HasSuffix(filepath.Base(src), ".tmp") {
 			return jsonFor(600.0)(src)

@@ -44,8 +44,9 @@ type Stream struct {
 	SampleRate     string      `json:"sample_rate"`
 	BitRate        string      `json:"bit_rate"`
 	RFrameRate     string      `json:"r_frame_rate"`
+	FieldOrder     string      `json:"field_order"`
 	ColorPrimaries string      `json:"color_primaries"`
-	ColorTransfer  string      `json:"color_trc"`
+	ColorTransfer  string      `json:"color_transfer"`
 	ColorSpace     string      `json:"color_space"`
 	Tags           Tags        `json:"tags"`
 	Disposition    Disposition `json:"disposition"`
@@ -149,4 +150,15 @@ func (i *Info) videoSideDataContains(needle string) bool {
 // Is10Bit reports whether the stream uses a 10-bit pixel format.
 func (s Stream) Is10Bit() bool {
 	return strings.Contains(s.PixFmt, "10")
+}
+
+// IsInterlaced reports whether the stream's field order marks interlaced
+// content (tt/tb/bt/bb, the bash hevc-convert.sh set). Unknown or missing
+// field order — common in MP4/camera containers — counts as progressive.
+func (s Stream) IsInterlaced() bool {
+	switch s.FieldOrder {
+	case "tt", "tb", "bt", "bb":
+		return true
+	}
+	return false
 }

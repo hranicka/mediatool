@@ -30,7 +30,7 @@ func (f *fakeRunner) Stream(name string, args ...string) ([]byte, error) {
 const sampleJSON = `{
   "streams": [
     {"index":0,"codec_name":"h264","codec_type":"video","pix_fmt":"yuv420p10le","width":3840,"height":2160,
-     "r_frame_rate":"60000/1001","color_primaries":"bt2020","color_trc":"smpte2084","color_space":"bt2020nc",
+     "r_frame_rate":"60000/1001","color_primaries":"bt2020","color_transfer":"smpte2084","color_space":"bt2020nc",
      "disposition":{"attached_pic":0},
      "side_data_list":[{"side_data_type":"DOVI configuration record"},{"side_data_type":"HDR10+ dynamic metadata (SMPTE ST 2094-40)"}]},
     {"index":1,"codec_name":"mjpeg","codec_type":"video","disposition":{"attached_pic":1}},
