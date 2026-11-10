@@ -49,6 +49,13 @@ func cleanJSON() string {
 		`],"format":{"duration":"600.0","size":"1000"}}`
 }
 
+// mustIgnore loads the ignore list, dropping the deprecation warnings
+// (only the ignore package's own tests assert those).
+func mustIgnore(dir, tool string, extra []string) ignore.List {
+	l, _ := ignore.Load(dir, tool, extra)
+	return l
+}
+
 func TestDupReport(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "dup.mkv")
@@ -61,7 +68,7 @@ func TestDupReport(t *testing.T) {
 	tl := &tool{
 		r: ff, ffprobeBin: "ffprobe",
 		cfg:     &Config{Dir: dir},
-		ignores: ignore.Load(dir, "dup", nil),
+		ignores: mustIgnore(dir, "dup", nil),
 		out:     out,
 	}
 	if err := tl.runAll(); err != nil {
@@ -88,7 +95,7 @@ func TestDupNoReport(t *testing.T) {
 	tl := &tool{
 		r: ff, ffprobeBin: "ffprobe",
 		cfg:     &Config{Dir: dir},
-		ignores: ignore.Load(dir, "dup", nil),
+		ignores: mustIgnore(dir, "dup", nil),
 		out:     out,
 	}
 	if err := tl.runAll(); err != nil {

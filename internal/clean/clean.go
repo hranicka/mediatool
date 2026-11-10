@@ -76,13 +76,18 @@ func Run(args []string) error {
 		return err
 	}
 
+	ignores, warnings := ignore.Load(cli.IgnoresDir(target), "clean", cfg.Ignores)
+	for _, w := range warnings {
+		fmt.Fprintln(os.Stdout, "warning:", w)
+	}
+
 	t := &tool{
 		r:          run.Cmd{},
 		ffmpegBin:  ffmpegBin,
 		ffprobeBin: ffprobeBin,
 		cfg:        &cfg,
 		whitelist:  media.ExpandWhitelist(strings.Split(cfg.Langs, ",")),
-		ignores:    ignore.Load(cli.IgnoresDir(target), "clean", cfg.Ignores),
+		ignores:    ignores,
 		out:        os.Stdout,
 		guard:      run.NewTmpGuard(),
 	}

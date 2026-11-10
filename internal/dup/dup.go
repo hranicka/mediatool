@@ -65,11 +65,16 @@ func Run(args []string) error {
 		return err
 	}
 
+	ignores, warnings := ignore.Load(dir, "dup", cfg.Ignores)
+	for _, w := range warnings {
+		fmt.Fprintln(os.Stdout, "warning:", w)
+	}
+
 	t := &tool{
 		r:          run.Cmd{},
 		ffprobeBin: ffprobeBin,
 		cfg:        &cfg,
-		ignores:    ignore.Load(dir, "dup", cfg.Ignores),
+		ignores:    ignores,
 		out:        os.Stdout,
 	}
 	return t.runAll()

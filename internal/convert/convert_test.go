@@ -87,7 +87,7 @@ func newTestTool(t *testing.T, dir string, ff run.Runner, cfg *Config, out *byte
 		ffprobeBin: "ffprobe",
 		enc:        encoders.Encoder{Kind: encoders.NVENC, Label: "Nvidia NVENC"},
 		cfg:        cfg,
-		ignores:    ignore.Load(dir, "convert", cfg.Ignores),
+		ignores:    mustIgnore(dir, "convert", cfg.Ignores),
 		out:        out,
 		guard:      &run.TmpGuard{},
 	}
@@ -133,6 +133,13 @@ func hasPair(args []string, a, b string) bool {
 		}
 	}
 	return false
+}
+
+// mustIgnore loads the ignore list, dropping the deprecation warnings
+// (only the ignore package's own tests assert those).
+func mustIgnore(dir, tool string, extra []string) ignore.List {
+	l, _ := ignore.Load(dir, tool, extra)
+	return l
 }
 
 func TestConvertHappyPath(t *testing.T) {
@@ -572,7 +579,7 @@ func TestRunAllWithIgnores(t *testing.T) {
 	out := &bytes.Buffer{}
 	cfg := &Config{Dir: dir, Mode: encoders.ModeMovie, CQ: 26}
 	tl := newTestTool(t, dir, ff, cfg, out)
-	tl.ignores = ignore.Load(dir, "convert", nil)
+	tl.ignores = mustIgnore(dir, "convert", nil)
 	if err := tl.runAll(); err != nil {
 		t.Fatalf("runAll: %v", err)
 	}

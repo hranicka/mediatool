@@ -108,7 +108,8 @@ path — directory and file names both count; `#` comments allowed):
 | File | Read by |
 |---|---|
 | `.mediatool-ignore` in the target dir | all commands |
-| `.hevcconverter-ignore` (convert) / `.cleaner-ignore` (clean) / `.ac3converter-ignore` (ac3) / `.enhance-ignore` (enhance) / `.dupfinder-ignore` (dup) | their command — per-command ignore lists, e.g. "not to clean" vs "not to re-encode" |
+| `.mediatool-convert-ignore` / `.mediatool-clean-ignore` / `.mediatool-ac3-ignore` / `.mediatool-enhance-ignore` / `.mediatool-dup-ignore` | their command — per-command ignore lists, e.g. "not to clean" vs "not to re-encode" |
+| `.hevcconverter-ignore` / `.cleaner-ignore` / `.ac3converter-ignore` / `.enhance-ignore` / `.dupfinder-ignore` | deprecated pre-2.0 per-command names, still honored with a rename warning |
 | `-i "a,b"` CLI list | all commands |
 
 Files are looked up in the target directory **and every ancestor up to the

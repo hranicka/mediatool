@@ -3,6 +3,7 @@ package ignore
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -18,7 +19,7 @@ func TestLoadUnion(t *testing.T) {
 	write(t, filepath.Join(dir, ".mediatool-ignore"), "trailers\n# a comment\n\nsub/\r\n")
 	write(t, filepath.Join(dir, ".cleaner-ignore"), "private\n")
 
-	l := Load(dir, "clean", []string{"CLI", "extra"})
+	l, warnings := Load(dir, "clean", []string{"CLI", "extra"})
 	got := l.entries
 	want := []string{"trailers", "sub/", "private", "CLI", "extra"}
 	if len(got) != len(want) {
@@ -32,10 +33,18 @@ func TestLoadUnion(t *testing.T) {
 	if l.Len() != 5 {
 		t.Errorf("Len: got %d, want 5", l.Len())
 	}
+	// .cleaner-ignore is a legacy name: still honored, but must warn
+	if len(warnings) != 1 || !strings.Contains(warnings[0], ".cleaner-ignore") ||
+		!strings.Contains(warnings[0], ".mediatool-clean-ignore") {
+		t.Errorf("legacy rename warning missing: %v", warnings)
+	}
 }
 
 func TestLoadMissingFiles(t *testing.T) {
-	l := Load(t.TempDir(), "dup", nil)
+	l, warnings := Load(t.TempDir(), "dup", nil)
+	if len(warnings) != 0 {
+		t.Errorf("no files must yield no warnings: %v", warnings)
+	}
 	if l.Len() != 0 || l.Match("anything.mkv") {
 		t.Errorf("missing files must yield an empty list, got %v", l.entries)
 	}
@@ -48,24 +57,44 @@ func TestLoadAncestors(t *testing.T) {
 		t.Fatal(err)
 	}
 	write(t, filepath.Join(base, ".mediatool-ignore"), "grand\n")
-	write(t, filepath.Join(base, "foo", "bar", ".cleaner-ignore"), "bar-level\n")
+	write(t, filepath.Join(base, "foo", "bar", ".mediatool-clean-ignore"), "bar-level\n")
 	write(t, filepath.Join(child, ".mediatool-ignore"), "child-level\n")
 
-	l := Load(child, "clean", nil)
+	l, warnings := Load(child, "clean", nil)
+	if len(warnings) != 0 {
+		t.Errorf("new-name files must not warn: %v", warnings)
+	}
 	for _, want := range []string{"grand", "bar-level", "child-level"} {
 		if !l.Match("/some/" + want + "/movie.mkv") {
 			t.Errorf("ancestor entry %q missing: %v", want, l.entries)
 		}
 	}
 
-	// the command's own file is looked up at every level too
+	// the command's file is looked up at every level too (legacy name: warns)
 	write(t, filepath.Join(base, "foo", ".hevcconverter-ignore"), "foo-tool\n")
-	l2 := Load(child, "convert", nil)
+	l2, warnings2 := Load(child, "convert", nil)
 	if !l2.Match("/x/foo-tool/y.mkv") {
 		t.Errorf("ancestor command file missing: %v", l2.entries)
 	}
+	if len(warnings2) != 1 || !strings.Contains(warnings2[0], ".mediatool-convert-ignore") {
+		t.Errorf("legacy rename warning missing: %v", warnings2)
+	}
 	if l2.Match("/x/bar-level/y.mkv") {
 		t.Error("the cleaner file must not apply to the convert subcommand")
+	}
+}
+
+func TestLegacyAndNewFilesBothApply(t *testing.T) {
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, ".cleaner-ignore"), "old\n")
+	write(t, filepath.Join(dir, ".mediatool-clean-ignore"), "new\n")
+
+	l, warnings := Load(dir, "clean", nil)
+	if !l.Match("/x/old/y.mkv") || !l.Match("/x/new/y.mkv") {
+		t.Errorf("both the legacy and the new file must apply: %v", l.entries)
+	}
+	if len(warnings) != 1 {
+		t.Errorf("still exactly one warning for the legacy file: %v", warnings)
 	}
 }
 

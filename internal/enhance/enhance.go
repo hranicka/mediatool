@@ -94,13 +94,18 @@ func Run(args []string) error {
 		enginePath = filepath.Join(defaultEngineDir(), engineBinary)
 	}
 
+	ignores, warnings := ignore.Load(dir, "enhance", cfg.Ignores)
+	for _, w := range warnings {
+		fmt.Fprintln(os.Stdout, "warning:", w)
+	}
+
 	t := &tool{
 		r:          run.Cmd{},
 		ffmpegBin:  ffmpegBin,
 		ffprobeBin: ffprobeBin,
 		cfg:        &cfg,
 		enginePath: enginePath,
-		ignores:    ignore.Load(dir, "enhance", cfg.Ignores),
+		ignores:    ignores,
 		out:        os.Stdout,
 		guard:      run.NewTmpGuard(),
 	}

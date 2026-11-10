@@ -5,6 +5,7 @@ package ignore
 
 import (
 	"bufio"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -14,10 +15,20 @@ import (
 // sharedFiles are read for every subcommand.
 var sharedFiles = []string{".mediatool-ignore"}
 
-// commandFiles maps subcommands to their own ignore file: a per-command
-// ignore list, so a path can be excluded from one command (e.g. "not to
-// clean") while still being processed by the others (e.g. re-encode).
+// commandFiles are the per-command ignore lists: a path can be excluded
+// from one command (e.g. "not to clean") while still being processed by
+// the others (e.g. re-encode).
 var commandFiles = map[string]string{
+	"convert": ".mediatool-convert-ignore",
+	"clean":   ".mediatool-clean-ignore",
+	"ac3":     ".mediatool-ac3-ignore",
+	"enhance": ".mediatool-enhance-ignore",
+	"dup":     ".mediatool-dup-ignore",
+}
+
+// legacyCommandFiles are the retired pre-2.0 per-command names, kept for
+// back compatibility; every hit produces a rename warning.
+var legacyCommandFiles = map[string]string{
 	"convert": ".hevcconverter-ignore",
 	"clean":   ".cleaner-ignore",
 	"ac3":     ".ac3converter-ignore",
@@ -30,20 +41,35 @@ type List struct {
 	entries []string
 }
 
-// Load returns the ignore list for a subcommand: the shared files plus the
-// command's own file, looked up in dir **and every ancestor directory up to
-// the filesystem root** (like a flat gitignore hierarchy), plus the extra
-// CLI entries. Missing files are the normal case.
-func Load(dir, tool string, extra []string) List {
-	names := append([]string{}, sharedFiles...)
-	if legacy, ok := commandFiles[tool]; ok {
-		names = append(names, legacy)
+// Load returns the ignore list for a subcommand: the shared file plus the
+// command's own file (new and legacy names), looked up in dir **and every
+// ancestor directory up to the filesystem root** (like a flat gitignore
+// hierarchy), plus the extra CLI entries. Missing files are the normal
+// case; the second return value holds one deprecation warning per legacy
+// file found.
+func Load(dir, tool string, extra []string) (List, []string) {
+	type nameKind struct {
+		name   string
+		legacy bool
+	}
+	names := []nameKind{{sharedFiles[0], false}}
+	if cmd, ok := commandFiles[tool]; ok {
+		names = append(names, nameKind{cmd, false})
+	}
+	if cmd, ok := legacyCommandFiles[tool]; ok {
+		names = append(names, nameKind{cmd, true})
 	}
 
 	l := List{}
+	var warnings []string
 	for d := dir; ; d = filepath.Dir(d) {
-		for _, name := range names {
-			l.readFile(filepath.Join(d, name))
+		for _, nk := range names {
+			path := filepath.Join(d, nk.name)
+			if l.readFile(path) && nk.legacy {
+				warnings = append(warnings, fmt.Sprintf(
+					"deprecated ignore file %s found - rename it to %s",
+					path, filepath.Join(d, commandFiles[tool])))
+			}
 		}
 		if d == filepath.Dir(d) {
 			break // reached the root
@@ -51,13 +77,14 @@ func Load(dir, tool string, extra []string) List {
 	}
 	l.entries = append(l.entries, extra...)
 	slog.Debug("ignore list", "tool", tool, "dir", dir, "entries", l.entries)
-	return l
+	return l, warnings
 }
 
-func (l *List) readFile(path string) {
+// readFile loads one ignore file; reports whether it exists.
+func (l *List) readFile(path string) bool {
 	f, err := os.Open(path)
 	if err != nil {
-		return
+		return false
 	}
 	defer f.Close()
 
@@ -69,6 +96,7 @@ func (l *List) readFile(path string) {
 		}
 		l.entries = append(l.entries, line)
 	}
+	return true
 }
 
 // Match reports whether any entry occurs in the path (literal substring,

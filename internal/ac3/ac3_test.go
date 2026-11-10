@@ -96,7 +96,7 @@ func newTestTool(t *testing.T, dir string, ff run.Runner, cfg *Config, out *byte
 		ffmpegBin:  "ffmpeg",
 		ffprobeBin: "ffprobe",
 		cfg:        cfg,
-		ignores:    ignore.Load(dir, "ac3", cfg.Ignores),
+		ignores:    mustIgnore(dir, "ac3", cfg.Ignores),
 		out:        out,
 		guard:      &run.TmpGuard{},
 	}
@@ -116,6 +116,13 @@ func hasPair(args []string, a, b string) bool {
 		}
 	}
 	return false
+}
+
+// mustIgnore loads the ignore list, dropping the deprecation warnings
+// (only the ignore package's own tests assert those).
+func mustIgnore(dir, tool string, extra []string) ignore.List {
+	l, _ := ignore.Load(dir, tool, extra)
+	return l
 }
 
 func TestAC3HappyPath(t *testing.T) {

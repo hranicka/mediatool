@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.0.3
+
+- New per-command ignore file names following the subcommands:
+  `.mediatool-convert-ignore` (convert), `.mediatool-clean-ignore` (clean),
+  `.mediatool-ac3-ignore` (ac3), `.mediatool-enhance-ignore` (enhance),
+  `.mediatool-dup-ignore` (dup). The shared file stays
+  `.mediatool-ignore`; per-command lists let a path be excluded from one
+  command ("not to clean") while others still process it ("re-encode").
+- The pre-2.0 per-command names (`.hevcconverter-ignore`,
+  `.cleaner-ignore`, `.ac3converter-ignore`, `.enhance-ignore`,
+  `.dupfinder-ignore`) are deprecated but still honored; every hit prints
+  a `warning:` line suggesting the rename.
+
 ## 2.0.2
 
 - Dropped `.video-scripts-ignore` support (bash-suite era). The shared

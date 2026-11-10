@@ -137,13 +137,18 @@ func Run(args []string) error {
 		return err
 	}
 
+	ignores, warnings := ignore.Load(dir, "convert", cfg.Ignores)
+	for _, w := range warnings {
+		fmt.Fprintln(os.Stdout, "warning:", w)
+	}
+
 	return (&tool{
 		r:          r,
 		ffmpegBin:  ffmpegBin,
 		ffprobeBin: ffprobeBin,
 		enc:        enc,
 		cfg:        &cfg,
-		ignores:    ignore.Load(dir, "convert", cfg.Ignores),
+		ignores:    ignores,
 		out:        os.Stdout,
 		guard:      run.NewTmpGuard(),
 	}).runAll()

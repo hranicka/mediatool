@@ -78,12 +78,17 @@ func Run(args []string) error {
 		return err
 	}
 
+	ignores, warnings := ignore.Load(cli.IgnoresDir(target), "ac3", cfg.Ignores)
+	for _, w := range warnings {
+		fmt.Fprintln(os.Stdout, "warning:", w)
+	}
+
 	t := &tool{
 		r:          run.Cmd{},
 		ffmpegBin:  ffmpegBin,
 		ffprobeBin: ffprobeBin,
 		cfg:        &cfg,
-		ignores:    ignore.Load(cli.IgnoresDir(target), "ac3", cfg.Ignores),
+		ignores:    ignores,
 		out:        os.Stdout,
 		guard:      run.NewTmpGuard(),
 	}

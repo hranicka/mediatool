@@ -101,7 +101,7 @@ func newTestTool(t *testing.T, dir string, ff run.Runner, cfg *Config, out *byte
 		ffprobeBin: "ffprobe",
 		cfg:        cfg,
 		whitelist:  mediaWhitelist(cfg.Langs),
-		ignores:    ignore.Load(dir, "clean", cfg.Ignores),
+		ignores:    mustIgnore(dir, "clean", cfg.Ignores),
 		out:        out,
 		guard:      &run.TmpGuard{},
 	}
@@ -128,6 +128,13 @@ func hasPair(args []string, a, b string) bool {
 		}
 	}
 	return false
+}
+
+// mustIgnore loads the ignore list, dropping the deprecation warnings
+// (only the ignore package's own tests assert those).
+func mustIgnore(dir, tool string, extra []string) ignore.List {
+	l, _ := ignore.Load(dir, tool, extra)
+	return l
 }
 
 func TestCleanHappyPath(t *testing.T) {
