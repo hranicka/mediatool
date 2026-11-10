@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.0.1
 
 - **Fixed: HDR detection never fired on real files** — the ffprobe parser
   read the `color_trc` JSON key, but ffprobe (any version) emits
