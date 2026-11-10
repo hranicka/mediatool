@@ -118,7 +118,7 @@ func TestConvertAudioAAC(t *testing.T) {
 	}, encSize: 500_000}
 	cfg := &Config{Dir: dir, Mode: encoders.ModeMovie, CQ: 26, Audio: "aac:192k:2"}
 	tl := newTestTool(t, dir, ff, cfg, &bytes.Buffer{})
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 
 	if tl.converted != 1 {
 		t.Fatalf("converted: %s", runOutput(tl))
@@ -153,7 +153,7 @@ func TestConvertAudioAC3Append(t *testing.T) {
 	}, encSize: 500_000}
 	cfg := &Config{Dir: dir, Mode: encoders.ModeMovie, CQ: 26, Audio: "ac3"}
 	tl := newTestTool(t, dir, ff, cfg, &bytes.Buffer{})
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 
 	if tl.converted != 1 || tl.failed != 0 {
 		t.Fatalf("converted: %+v", tl)
@@ -185,7 +185,7 @@ func TestConvertAudioGateRejects(t *testing.T) {
 	}, encSize: 500_000}
 	cfg := &Config{Dir: dir, Mode: encoders.ModeMovie, CQ: 26, Audio: "ac3"}
 	tl := newTestTool(t, dir, ff, cfg, &bytes.Buffer{})
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 
 	if tl.failed != 1 {
 		t.Fatalf("missing appended track must fail the gate: %+v", tl)
@@ -221,7 +221,7 @@ func TestConvertTonemapNVENC(t *testing.T) {
 	}, encSize: 500_000}
 	cfg := &Config{Dir: dir, Mode: encoders.ModeMovie, CQ: 26, ScaleHeight: 720, Tonemap: true}
 	tl := newTestTool(t, dir, ff, cfg, &bytes.Buffer{})
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 
 	if tl.converted != 1 {
 		t.Fatalf("converted: %+v", tl)
@@ -259,7 +259,7 @@ func TestConvertTonemapVAAPIFallback(t *testing.T) {
 	cfg := &Config{Dir: dir, Mode: encoders.ModeMovie, CQ: 26, ScaleHeight: 720, Tonemap: true}
 	tl := newTestTool(t, dir, ff, cfg, &bytes.Buffer{})
 	tl.enc = encoders.Encoder{Codec: encoders.CodecHEVC, Kind: encoders.VAAPI, Label: "VAAPI (Intel/AMD)"}
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 
 	if tl.converted != 1 {
 		t.Fatalf("converted: %+v", tl)
@@ -316,7 +316,7 @@ func TestConvertTonemapUnavailableSkips(t *testing.T) {
 	cfg := &Config{Dir: dir, Mode: encoders.ModeMovie, CQ: 26, Tonemap: true}
 	tl := newTestTool(t, dir, &failFilterRunner{ff: ff, failFilter: placeboTonemap}, cfg, &bytes.Buffer{})
 	tl.enc = encoders.Encoder{Codec: encoders.CodecHEVC, Kind: encoders.VAAPI, Label: "VAAPI (Intel/AMD)"}
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 
 	if tl.skipped != 1 || tl.converted != 0 || len(ff.encCalls) != 0 {
 		t.Fatalf("unavailable tonemap must skip: %+v", tl)
@@ -335,7 +335,7 @@ func TestConvertTonemapSDRUnaffected(t *testing.T) {
 	ff := &fakeFF{probeFor: jsonFor(600.0), encSize: 500_000}
 	cfg := &Config{Dir: dir, Mode: encoders.ModeMovie, CQ: 26, Tonemap: true}
 	tl := newTestTool(t, dir, ff, cfg, &bytes.Buffer{})
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 
 	if tl.converted != 1 {
 		t.Fatalf("converted: %+v", tl)
@@ -365,7 +365,7 @@ func TestConvertDeinterlace(t *testing.T) {
 	}, encSize: 500_000}
 	out := &bytes.Buffer{}
 	tl := newTestTool(t, dir, ff, &Config{Dir: dir, Mode: encoders.ModeMovie, CQ: 26}, out)
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 
 	if tl.converted != 1 {
 		t.Fatalf("converted: %+v", tl)
@@ -386,7 +386,7 @@ func TestConvertMTSOutput(t *testing.T) {
 
 	ff := &fakeFF{probeFor: jsonFor(600.0), encSize: 500_000}
 	tl := newTestTool(t, dir, ff, &Config{Dir: dir, Mode: encoders.ModeMovie, CQ: 26}, &bytes.Buffer{})
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 
 	if tl.converted != 1 {
 		t.Fatalf("converted: %+v", tl)
@@ -411,7 +411,7 @@ func TestConvertMtimePreserved(t *testing.T) {
 
 	ff := &fakeFF{probeFor: jsonFor(600.0), encSize: 500_000}
 	tl := newTestTool(t, dir, ff, &Config{Dir: dir, Mode: encoders.ModeMovie, CQ: 26}, &bytes.Buffer{})
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 
 	if tl.converted != 1 {
 		t.Fatalf("converted: %+v", tl)
@@ -472,7 +472,7 @@ func TestConvertLangCleanup(t *testing.T) {
 	out := &bytes.Buffer{}
 	tl := newTestTool(t, dir, ff, &Config{Dir: dir, Mode: encoders.ModeMovie, CQ: 26, Langs: "cs,en"}, out)
 	tl.whitelist = media.ExpandWhitelist([]string{"cs", "en"})
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 
 	if tl.converted != 1 || tl.failed != 0 {
 		t.Fatalf("converted: %s (out: %s)", runOutput(tl), out.String())
@@ -506,7 +506,7 @@ func TestConvertLangSoleAudioKept(t *testing.T) {
 	out := &bytes.Buffer{}
 	tl := newTestTool(t, dir, ff, &Config{Dir: dir, Mode: encoders.ModeMovie, CQ: 26}, out)
 	tl.whitelist = media.ExpandWhitelist([]string{"cs", "en"})
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 
 	if tl.converted != 1 {
 		t.Fatalf("converted: %s (out: %s)", runOutput(tl), out.String())
@@ -537,7 +537,7 @@ func TestConvertLangAACOrdinalShift(t *testing.T) {
 	}, encSize: 500_000}
 	tl := newTestTool(t, dir, ff, &Config{Dir: dir, Mode: encoders.ModeMovie, CQ: 26, Audio: "aac:192k:2"}, &bytes.Buffer{})
 	tl.whitelist = media.ExpandWhitelist([]string{"cs", "en"})
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 
 	if tl.converted != 1 {
 		t.Fatalf("converted: %s", runOutput(tl))
@@ -572,7 +572,7 @@ func TestConvertLangAC3AppendFiltered(t *testing.T) {
 	}, encSize: 500_000}
 	tl := newTestTool(t, dir, ff, &Config{Dir: dir, Mode: encoders.ModeMovie, CQ: 26, Audio: "ac3"}, &bytes.Buffer{})
 	tl.whitelist = media.ExpandWhitelist([]string{"cs", "en"})
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 
 	if tl.converted != 1 || tl.failed != 0 {
 		t.Fatalf("converted: %s", runOutput(tl))

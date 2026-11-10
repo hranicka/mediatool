@@ -8,23 +8,26 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hranicka/mediatool/internal/encoders"
 	"github.com/hranicka/mediatool/internal/ignore"
 	"github.com/hranicka/mediatool/internal/probe"
 	"github.com/hranicka/mediatool/internal/run"
+	"github.com/hranicka/mediatool/internal/ui"
 )
 
 // fakeFF fakes both binaries: ffprobe JSON responses keyed by a function of
 // the probed path, ffmpeg encodes writing a real output file.
 type fakeFF struct {
-	probeFor   func(src string) (string, bool)
-	streamHook func(args []string) ([]byte, error)
-	encodeErr  error
-	encStderr  string
-	encSize    int64
-	encCalls   [][]string
-	probeLogs  [][]string
+	probeFor      func(src string) (string, bool)
+	streamHook    func(args []string) ([]byte, error)
+	encodeErr     error
+	encStderr     string
+	encSize       int64
+	encCalls      [][]string
+	probeLogs     [][]string
+	progressCalls int
 }
 
 func (f *fakeFF) Output(name string, args ...string) ([]byte, error) {
@@ -46,6 +49,20 @@ func (f *fakeFF) Stream(name string, args ...string) ([]byte, error) {
 	f.encCalls = append(f.encCalls, args)
 	if f.streamHook != nil {
 		return f.streamHook(args)
+	}
+	return f.defaultStream(args)
+}
+
+// Progress makes the fake a run.ProgressRunner: pretty-profile tests
+// exercise the stats callback; the encode itself behaves like Stream.
+func (f *fakeFF) Progress(name string, onStats func(d time.Duration, speed string), args ...string) ([]byte, error) {
+	f.encCalls = append(f.encCalls, args)
+	f.progressCalls++
+	if f.streamHook != nil {
+		return f.streamHook(args)
+	}
+	if onStats != nil {
+		onStats(500*time.Millisecond, "1.0x")
 	}
 	return f.defaultStream(args)
 }
@@ -96,7 +113,7 @@ func newTestTool(t *testing.T, dir string, ff run.Runner, cfg *Config, out *byte
 		cfg:        cfg,
 		audio:      audio,
 		ignores:    mustIgnore(dir, "convert", cfg.Ignores),
-		out:        out,
+		rep:        ui.New(out, ui.Profile{}),
 		guard:      &run.TmpGuard{},
 	}
 }
@@ -158,7 +175,7 @@ func TestConvertHappyPath(t *testing.T) {
 	ff := &fakeFF{probeFor: jsonFor(600.0), encSize: 500_000}
 	out := &bytes.Buffer{}
 	tl := newTestTool(t, dir, ff, &Config{Dir: dir, Mode: encoders.ModeMovie, CQ: 26}, out)
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 
 	if tl.converted != 1 || tl.skipped != 0 || tl.failed != 0 {
 		t.Fatalf("counters: %+v (out: %s)", tl, out.String())
@@ -204,7 +221,7 @@ func TestConvertCoverArtNegativeMap(t *testing.T) {
 	}, encSize: 1}
 
 	tl := newTestTool(t, dir, ff, &Config{Dir: dir, Mode: encoders.ModeMovie, CQ: 26}, &bytes.Buffer{})
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 
 	if tl.converted != 1 {
 		t.Fatalf("converted: %+v", tl)
@@ -226,7 +243,7 @@ func TestConvertMultiVideoSkip(t *testing.T) {
 	ff := &fakeFF{probeFor: func(string) (string, bool) { return mvcJSON, true }}
 	out := &bytes.Buffer{}
 	tl := newTestTool(t, dir, ff, &Config{Dir: dir, Mode: encoders.ModeMovie, CQ: 26}, out)
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 
 	if tl.skipped != 1 || tl.converted != 0 || len(ff.encCalls) != 0 {
 		t.Errorf("multi-video must be skipped: %+v out=%s", tl, out.String())
@@ -253,7 +270,7 @@ func TestConvertDolbyVision(t *testing.T) {
 
 	cfg := &Config{Dir: dir, Mode: encoders.ModeMovie, CQ: 26}
 	tl := newTestTool(t, dir, ff, cfg, out)
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 	if tl.skipped != 1 || len(ff.encCalls) != 0 {
 		t.Errorf("DV must be skipped without force: %+v", tl)
 	}
@@ -264,7 +281,7 @@ func TestConvertDolbyVision(t *testing.T) {
 	// forced DV re-encodes
 	cfg.Force = true
 	tl2 := newTestTool(t, dir, ff, cfg, out)
-	tl2.processFile(src)
+	tl2.processFile(1, 1, src)
 	if tl2.converted != 1 {
 		t.Errorf("forced DV must convert: %+v", tl2)
 	}
@@ -279,7 +296,7 @@ func TestConvertBackupExistsSkip(t *testing.T) {
 	ff := &fakeFF{probeFor: jsonFor(600.0)}
 	out := &bytes.Buffer{}
 	tl := newTestTool(t, dir, ff, &Config{Dir: dir, Mode: encoders.ModeMovie, CQ: 26}, out)
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 
 	if tl.skipped != 1 || len(ff.encCalls) != 0 {
 		t.Errorf("existing backup must skip: %+v out=%s", tl, out.String())
@@ -304,7 +321,7 @@ func TestConvertCodecGuard(t *testing.T) {
 
 	cfg := &Config{Dir: dir, Mode: encoders.ModeMovie, CQ: 26}
 	tl := newTestTool(t, dir, ff, cfg, out)
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 	if tl.skipped != 1 || len(ff.encCalls) != 0 {
 		t.Errorf("non-h264 must be skipped: %+v out=%s", tl, out.String())
 	}
@@ -314,7 +331,7 @@ func TestConvertCodecGuard(t *testing.T) {
 
 	cfg.Force = true
 	tl2 := newTestTool(t, dir, ff, cfg, out)
-	tl2.processFile(src)
+	tl2.processFile(1, 1, src)
 	if tl2.converted != 1 {
 		t.Errorf("forced non-h264 must convert: %+v", tl2)
 	}
@@ -337,7 +354,7 @@ func TestConvertVC1Sources(t *testing.T) {
 			}, encSize: 1}
 			out := &bytes.Buffer{}
 			tl := newTestTool(t, dir, ff, &Config{Dir: dir, Mode: encoders.ModeMovie, CQ: 26}, out)
-			tl.processFile(src)
+			tl.processFile(1, 1, src)
 			if tl.converted != 1 {
 				t.Errorf("%s source must convert without force: %+v out=%s", codec, tl, out.String())
 			}
@@ -356,7 +373,7 @@ func TestConvertSizeGate(t *testing.T) {
 	ff := &fakeFF{probeFor: jsonFor(600.0), encSize: 2_000_000} // grows: rejected
 	out := &bytes.Buffer{}
 	tl := newTestTool(t, dir, ff, &Config{Dir: dir, Mode: encoders.ModeMovie, CQ: 26}, out)
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 
 	if tl.skipped != 1 {
 		t.Errorf("grown output must be skipped: %+v out=%s", tl, out.String())
@@ -381,7 +398,7 @@ func TestConvertDurationGate(t *testing.T) {
 	ff := &fakeFF{probeFor: jsonFor(100.0), encSize: 500} // output much shorter
 	out := &bytes.Buffer{}
 	tl := newTestTool(t, dir, ff, &Config{Dir: dir, Mode: encoders.ModeMovie, CQ: 26}, out)
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 
 	if tl.failed != 1 {
 		t.Errorf("truncated output must fail: %+v out=%s", tl, out.String())
@@ -399,7 +416,7 @@ func TestConvertDryRun(t *testing.T) {
 	ff := &fakeFF{probeFor: jsonFor(600.0)}
 	out := &bytes.Buffer{}
 	tl := newTestTool(t, dir, ff, &Config{Dir: dir, Mode: encoders.ModeMovie, CQ: 26, DryRun: true}, out)
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 
 	if tl.converted != 1 || len(ff.encCalls) != 0 {
 		t.Errorf("dry run must not encode: %+v out=%s", tl, out.String())
@@ -417,7 +434,7 @@ func TestConvertChromecast(t *testing.T) {
 	ff := &fakeFF{probeFor: jsonFor(600.0), encSize: 500_000}
 	out := &bytes.Buffer{}
 	tl := newTestTool(t, dir, ff, &Config{Dir: dir, Mode: encoders.ModeChromecast, CQ: 22}, out)
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 
 	outPath := filepath.Join(dir, "movie_CC4_FIXED.mkv")
 	if tl.converted != 1 {
@@ -443,7 +460,7 @@ func TestConvertChromecastIdempotence(t *testing.T) {
 	ff := &fakeFF{probeFor: jsonFor(600.0)}
 	out := &bytes.Buffer{}
 	tl := newTestTool(t, dir, ff, &Config{Dir: dir, Mode: encoders.ModeChromecast, CQ: 22}, out)
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 
 	if tl.skipped != 1 || len(ff.encCalls) != 0 {
 		t.Errorf("CC4_FIXED outputs must be skipped: %+v out=%s", tl, out.String())
@@ -457,7 +474,7 @@ func TestConvertMP4MuxArgs(t *testing.T) {
 
 	ff := &fakeFF{probeFor: jsonFor(600.0), encSize: 500_000}
 	tl := newTestTool(t, dir, ff, &Config{Dir: dir, Mode: encoders.ModeMovie, CQ: 26}, &bytes.Buffer{})
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 
 	args := firstEncode(t, ff)
 	if !hasPair(args, "-movflags", "+use_metadata_tags+faststart") || !hasPair(args, "-f", "mp4") {
@@ -474,7 +491,7 @@ func TestConvertCameraCap(t *testing.T) {
 	out := &bytes.Buffer{}
 	// stream bit_rate 8000000 -> 8000 kbps -> cap 5200k
 	tl := newTestTool(t, dir, ff, &Config{Dir: dir, Mode: encoders.ModeCamera, CQ: 28}, out)
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 
 	args := firstEncode(t, ff)
 	if !hasPair(args, "-maxrate", "5200k") || !hasPair(args, "-bufsize", "10400k") {
@@ -500,7 +517,7 @@ func TestConvertColorArgs(t *testing.T) {
 		return hdrJSON, true
 	}, encSize: 500_000}
 	tl := newTestTool(t, dir, ff, &Config{Dir: dir, Mode: encoders.ModeMovie, CQ: 26}, &bytes.Buffer{})
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 
 	args := firstEncode(t, ff)
 	if !hasPair(args, "-pix_fmt", "p010le") || !hasPair(args, "-color_primaries", "bt2020") ||
@@ -523,7 +540,7 @@ func TestConvertScale(t *testing.T) {
 		return uhdJSON, true
 	}, encSize: 500_000}
 	tl := newTestTool(t, dir, ff, &Config{Dir: dir, Mode: encoders.ModeMovie, CQ: 26, ScaleHeight: 1080}, &bytes.Buffer{})
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 
 	args := firstEncode(t, ff)
 	if !hasPair(args, "-vf", "scale=-2:1080:flags=lanczos") {
@@ -539,7 +556,7 @@ func TestConvertScaleSkipsSmaller(t *testing.T) {
 	ff := &fakeFF{probeFor: jsonFor(600.0), encSize: 500_000}
 	out := &bytes.Buffer{}
 	tl := newTestTool(t, dir, ff, &Config{Dir: dir, Mode: encoders.ModeMovie, CQ: 26, ScaleHeight: 2160}, out)
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 
 	args := firstEncode(t, ff)
 	if hasArg(args, "-vf") {
@@ -565,7 +582,7 @@ func TestConvertRetryLadder(t *testing.T) {
 		return ff.defaultStream(args)
 	}
 	tl := newTestTool(t, dir, ff, &Config{Dir: dir, Mode: encoders.ModeMovie, CQ: 26}, &bytes.Buffer{})
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 
 	if tl.converted != 1 || calls != 2 {
 		t.Errorf("expected a retry after the failed attempt: calls=%d %+v", calls, tl)
@@ -588,7 +605,7 @@ func TestConvertDecodeErrorWarning(t *testing.T) {
 	r, w, _ := os.Pipe()
 	os.Stderr = w
 	tl := newTestTool(t, dir, ff, &Config{Dir: dir, Mode: encoders.ModeMovie, CQ: 26}, &bytes.Buffer{})
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 	os.Stderr = oldErr
 	w.Close()
 	warn, _ := io.ReadAll(r)
@@ -661,7 +678,7 @@ func TestConvertVAAPIEncode(t *testing.T) {
 	}, encSize: 500_000}
 	tl := newTestTool(t, dir, ff, &Config{Dir: dir, Mode: encoders.ModeMovie, CQ: 26, VaapiDevice: "/dev/dri/renderD129"}, &bytes.Buffer{})
 	tl.enc = encoders.Encoder{Codec: encoders.CodecHEVC, Kind: encoders.VAAPI, Label: "VAAPI (Intel/AMD)"}
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 
 	args := firstEncode(t, ff)
 	if !hasPair(args, "-vaapi_device", "/dev/dri/renderD129") {
@@ -681,7 +698,7 @@ func TestConvertVAAPIEncode(t *testing.T) {
 func TestSelectEncoder(t *testing.T) {
 	out := &bytes.Buffer{}
 	failNVENC := &failFirstRunner{failProbe: "hevc_nvenc"}
-	enc, err := selectEncoder(failNVENC, out, "ffmpeg", "/dev/dri/renderD128", encoders.CodecHEVC, encoders.Candidates(encoders.CodecHEVC))
+	enc, err := selectEncoder(failNVENC, ui.New(out, ui.Profile{}), "ffmpeg", "/dev/dri/renderD128", encoders.CodecHEVC, encoders.Candidates(encoders.CodecHEVC))
 	if err != nil {
 		t.Fatalf("selectEncoder: %v", err)
 	}
@@ -704,7 +721,7 @@ func TestConvertAV1Output(t *testing.T) {
 	ff := &fakeFF{probeFor: jsonFor(600.0), encSize: 500_000}
 	tl := newTestTool(t, dir, ff, &Config{Dir: dir, Mode: encoders.ModeMovie, Codec: encoders.CodecAV1, CQ: 26}, &bytes.Buffer{})
 	tl.enc = encoders.Encoder{Codec: encoders.CodecAV1, Kind: encoders.NVENC, Label: "Nvidia NVENC"}
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 
 	if tl.converted != 1 {
 		t.Fatalf("av1 run must convert: %+v", tl)
@@ -861,4 +878,79 @@ func TestPlainOutputGolden(t *testing.T) {
 			t.Errorf("plain dry-run output drifted:\n--- got ---\n%s\n--- want ---\n%s", got, want)
 		}
 	})
+}
+
+// TestPrettyOutput exercises the interactive rendering: symbols, indexes,
+// the stats-driven progress callback and the summary block.
+func TestPrettyOutput(t *testing.T) {
+	dir := t.TempDir()
+	good := filepath.Join(dir, "good.mkv")
+	good2 := filepath.Join(dir, "good2.mkv")
+	skip := filepath.Join(dir, "skip.mkv")
+	writeFile(t, good, 1000)
+	writeFile(t, good2, 1000)
+	writeFile(t, skip, 100)
+
+	hevcSrc := videoJSON("hevc", "yuv420p", "")
+	ff := &fakeFF{
+		probeFor: func(src string) (string, bool) {
+			if strings.HasSuffix(filepath.Base(src), ".tmp") {
+				return jsonFor(600.0)(src)
+			}
+			if filepath.Base(src) == "skip.mkv" {
+				return hevcSrc, true
+			}
+			return h264JSON, true
+		},
+		encSize: 500,
+	}
+	out := &bytes.Buffer{}
+	cfg := &Config{Dir: dir, Preset: "movie", Mode: encoders.ModeMovie, Codec: encoders.CodecHEVC, CQ: 26}
+	tl := newTestTool(t, dir, ff, cfg, out)
+	tl.rep = ui.New(out, ui.Profile{Interactive: true, Color: true, UTF8: true, Width: 200})
+	if err := tl.runAll(); err != nil {
+		t.Fatalf("runAll: %v", err)
+	}
+	// the exact ANSI placement is ui's own test suite's job; here the
+	// assertions strip codes and check the rendered content
+	rendered := stripANSI(out.String())
+
+	if ff.progressCalls != 2 {
+		t.Errorf("pretty runs must drive the stats callback per file, got %d", ff.progressCalls)
+	}
+	for _, want := range []string{
+		"3 media file(s) found",
+		"▶ [1/3] ",
+		"▶ [2/3] ",
+		"✓ 1000 → 500",
+		"−50%",
+		"– [3/3] ",
+		"video codec is 'hevc', not convertible",
+		"✓ 2 converted",
+		"– 1 skipped",
+		"(−50%)",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Errorf("pretty output missing %q:\n%s", want, out.String())
+		}
+	}
+	if !strings.Contains(out.String(), "\x1b[2mFFmpeg binary \x1b[0m: ffmpeg") {
+		t.Errorf("pretty header must tint labels")
+	}
+}
+
+// stripANSI removes color codes so assertions can match plain fragments
+// across tint boundaries.
+func stripANSI(s string) string {
+	for {
+		start := strings.IndexByte(s, '\x1b')
+		if start < 0 {
+			return s
+		}
+		end := strings.IndexByte(s[start:], 'm')
+		if end < 0 {
+			return s
+		}
+		s = s[:start] + s[start+end+1:]
+	}
 }

@@ -14,6 +14,9 @@ import (
 // KV is one settings header row.
 type KV struct{ Key, Value string }
 
+// Pair builds a header row.
+func Pair(key, value string) KV { return KV{Key: key, Value: value} }
+
 // Failure is one failed file, listed in the pretty summary.
 type Failure struct{ Path, Msg string }
 
@@ -138,6 +141,17 @@ func (r *Reporter) Skip(i, n int, path, reason string) {
 	}
 	line := fmt.Sprintf("%s %s%s %s %s", r.sym.Skip, idx(i, n), path, r.dash(), reason)
 	fmt.Fprintln(r.out, r.pal.Dim(line))
+}
+
+// SkipInline reports a skip whose historical plain rendering glues the
+// path to the closing paren (kept byte-compatible).
+func (r *Reporter) SkipInline(i, n int, path, reason string) {
+	r.close()
+	if !r.p.Interactive {
+		fmt.Fprintf(r.out, "Skipping (%s)%s\n", reason, path)
+		return
+	}
+	r.Skip(i, n, path, reason)
 }
 
 // Notice reports a per-file decision the user should not miss (forced

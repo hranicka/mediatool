@@ -12,7 +12,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"log/slog"
 	"math"
 	"os"
@@ -21,6 +20,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/hranicka/mediatool/internal/ac3"
 	"github.com/hranicka/mediatool/internal/backup"
@@ -32,6 +32,7 @@ import (
 	"github.com/hranicka/mediatool/internal/media"
 	"github.com/hranicka/mediatool/internal/probe"
 	"github.com/hranicka/mediatool/internal/run"
+	"github.com/hranicka/mediatool/internal/ui"
 	"github.com/hranicka/mediatool/internal/walk"
 )
 
@@ -67,6 +68,7 @@ type Config struct {
 	Ignores     []string
 	Force       bool
 	DryRun      bool
+	Verbose     bool
 	VaapiDevice string
 }
 
@@ -79,11 +81,21 @@ type tool struct {
 	audio      audioTarget
 	whitelist  []string
 	ignores    ignore.List
-	out        io.Writer
+	rep        *ui.Reporter
 	guard      *run.TmpGuard
 	placebo    *bool // memoized libplacebo filter availability
 
 	converted, skipped, failed int
+	bytesIn, bytesOut          int64
+	failures                   []ui.Failure
+}
+
+// fail renders the standard "Error: ..." line and records the failure for
+// the summary.
+func (t *tool) fail(path, msg, detail string) {
+	t.rep.Fail(msg, detail)
+	t.failures = append(t.failures, ui.Failure{Path: path, Msg: msg})
+	t.failed++
 }
 
 // streamGate records the stream counts the output must carry; the
@@ -129,6 +141,7 @@ func Run(args []string) error {
 	if verbose {
 		slog.SetLogLoggerLevel(slog.LevelDebug)
 	}
+	cfg.Verbose = verbose
 	if fs.NArg() != 1 {
 		fmt.Fprintln(os.Stderr, "usage: mediatool convert [flags] <directory|file>")
 		return fmt.Errorf("convert needs exactly one directory or file argument")
@@ -177,11 +190,12 @@ func Run(args []string) error {
 	}
 
 	var candidates []encoders.Kind
+	rep := ui.New(os.Stdout, ui.Detect(os.Stdout, os.Stderr))
 	if cfg.Enc == "auto" {
 		candidates = encoders.Candidates(cfg.Codec)
 	} else {
 		if cfg.Enc == "x265" {
-			fmt.Fprintln(os.Stdout, "warning: -e x265 is deprecated - use -e sw")
+			rep.Raw(ui.WarnTone, "warning: -e x265 is deprecated - use -e sw\n")
 			cfg.Enc = "sw"
 		}
 		k, err := encoders.ParseKind(cfg.Enc)
@@ -192,14 +206,14 @@ func Run(args []string) error {
 	}
 
 	r := run.Cmd{}
-	enc, err := selectEncoder(r, os.Stdout, ffmpegBin, cfg.VaapiDevice, cfg.Codec, candidates)
+	enc, err := selectEncoder(r, rep, ffmpegBin, cfg.VaapiDevice, cfg.Codec, candidates)
 	if err != nil {
 		return err
 	}
 
 	ignores, warnings := ignore.Load(cli.IgnoresDir(target), "convert", cfg.Ignores)
 	for _, w := range warnings {
-		fmt.Fprintln(os.Stdout, "warning:", w)
+		rep.Raw(ui.WarnTone, "warning: %s\n", w)
 	}
 
 	return (&tool{
@@ -211,17 +225,17 @@ func Run(args []string) error {
 		audio:      tAudio,
 		whitelist:  whitelist,
 		ignores:    ignores,
-		out:        os.Stdout,
+		rep:        rep,
 		guard:      run.NewTmpGuard(),
 	}).runAll()
 }
 
 // selectEncoder probes candidates one by one, echoing the bash progress
 // lines.
-func selectEncoder(r run.Runner, w io.Writer, ffmpegBin, vaapiDevice string, codec encoders.Codec, candidates []encoders.Kind) (encoders.Encoder, error) {
+func selectEncoder(r run.Runner, rep *ui.Reporter, ffmpegBin, vaapiDevice string, codec encoders.Codec, candidates []encoders.Kind) (encoders.Encoder, error) {
 	for _, k := range candidates {
 		e := encoders.Encoder{Codec: codec, Kind: k, Label: encoders.Label(codec, k)}
-		fmt.Fprintf(w, "Testing encoder: %s...\n", e.Label)
+		rep.Raw(ui.DimTone, "Testing encoder: %s...\n", e.Label)
 		chosen, err := encoders.Probe(r, ffmpegBin, vaapiDevice, codec, []encoders.Kind{k})
 		if err == nil {
 			return chosen, nil
@@ -291,27 +305,31 @@ func (t *tool) runAll() error {
 	if cfg.Mode == encoders.ModeChromecast {
 		cqNote = ", output written as new *_CC4_FIXED.mkv"
 	}
-	fmt.Fprintf(t.out, "FFmpeg binary : %s\n", t.ffmpegBin)
-	fmt.Fprintf(t.out, "Using encoder : %s (quality value: %d)\n", t.enc.Label, cfg.CQ)
-	fmt.Fprintf(t.out, "Output codec  : %s\n", cfg.Codec)
-	fmt.Fprintf(t.out, "Preset        : %s%s\n", cfg.Preset, cqNote)
-	fmt.Fprintf(t.out, "Audio target  : %s\n", t.audio.desc())
+	kvs := []ui.KV{
+		ui.Pair("FFmpeg binary", t.ffmpegBin),
+		ui.Pair("Using encoder", fmt.Sprintf("%s (quality value: %d)", t.enc.Label, cfg.CQ)),
+		ui.Pair("Output codec", string(cfg.Codec)),
+		ui.Pair("Preset", cfg.Preset+cqNote),
+		ui.Pair("Audio target", t.audio.desc()),
+	}
 	if len(t.whitelist) > 0 {
-		fmt.Fprintf(t.out, "Keep languages: %s (+ no/und tags)\n", strings.Join(t.whitelist, " "))
+		kvs = append(kvs, ui.Pair("Keep languages", strings.Join(t.whitelist, " ")+" (+ no/und tags)"))
 	}
 	if cfg.Tonemap {
-		fmt.Fprintln(t.out, "Tonemap       : HDR sources re-map to SDR bt709")
+		kvs = append(kvs, ui.Pair("Tonemap", "HDR sources re-map to SDR bt709"))
 	}
-	fmt.Fprintf(t.out, "Target        : %s\n", cfg.Dir)
-	fmt.Fprintf(t.out, "Ignore entries: %d\n", t.ignores.Len())
+	kvs = append(kvs,
+		ui.Pair("Target", cfg.Dir),
+		ui.Pair("Ignore entries", strconv.Itoa(t.ignores.Len())))
 	if cfg.ScaleHeight > 0 {
-		fmt.Fprintf(t.out, "Scale target  : %dp (downscale only)\n", cfg.ScaleHeight)
+		kvs = append(kvs, ui.Pair("Scale target", fmt.Sprintf("%dp (downscale only)", cfg.ScaleHeight)))
 	}
 	if cfg.DryRun {
-		fmt.Fprintf(t.out, "Extra         : DRY RUN\n")
+		kvs = append(kvs, ui.Pair("Extra", "DRY RUN"))
 	}
-	fmt.Fprintln(t.out, "==========================================")
+	t.rep.Header(kvs)
 
+	start := time.Now()
 	target := cfg.Dir
 	st, err := os.Stat(target)
 	if err != nil {
@@ -322,41 +340,46 @@ func (t *tool) runAll() error {
 		if err != nil {
 			return err
 		}
-		for _, path := range files {
+		t.rep.Found(len(files))
+		for i, path := range files {
 			if t.ignores.Match(path) {
-				fmt.Fprintf(t.out, "Skipping (ignored): %s\n", path)
+				t.rep.Skip(i+1, len(files), path, "ignored")
 				continue
 			}
-			t.processFile(path)
+			t.processFile(i+1, len(files), path)
 		}
 	} else if t.ignores.Match(target) {
-		fmt.Fprintf(t.out, "Skipping (ignored): %s\n", target)
+		t.rep.Skip(1, 1, target, "ignored")
 	} else {
-		t.processFile(target)
+		t.processFile(1, 1, target)
 	}
 
-	fmt.Fprintln(t.out, "==========================================")
-	fmt.Fprintf(t.out, "Done. Converted: %d, skipped: %d, failed: %d.\n", t.converted, t.skipped, t.failed)
+	t.rep.Summary("Done.", "Converted", "skipped", ui.Outcome{
+		Done:     t.converted,
+		Skipped:  t.skipped,
+		Failed:   t.failed,
+		BytesIn:  t.bytesIn,
+		BytesOut: t.bytesOut,
+		Failures: t.failures,
+		Elapsed:  time.Since(start),
+	})
 	if t.failed > 0 {
 		return fmt.Errorf("%d file(s) failed", t.failed)
 	}
 	return nil
 }
 
-func (t *tool) skip(format string, args ...any) {
-	// every call site passes the path as the last argument, filling the
-	// trailing %s after the reason
-	fmt.Fprintf(t.out, "Skipping ("+format+"): %s\n", args...)
+func (t *tool) skip(i, n int, path, reason string) {
+	t.rep.Skip(i, n, path, reason)
 	t.skipped++
 }
 
-func (t *tool) processFile(path string) {
+func (t *tool) processFile(i, n int, path string) {
 	cfg := t.cfg
 
 	info, err := probe.Probe(t.r, t.ffprobeBin, path)
 	if err != nil {
-		fmt.Fprintf(t.out, "Skipping (cannot probe: %v): %s\n", err, path)
-		t.skipped++
+		t.skip(i, n, path, fmt.Sprintf("cannot probe: %v", err))
 		return
 	}
 
@@ -375,12 +398,12 @@ func (t *tool) processFile(path string) {
 	if len(real) != 1 {
 		if len(real) == 0 {
 			if len(byType[probe.TypeVideo]) > 0 {
-				t.skip("no usable video stream, only cover art", path)
+				t.skip(i, n, path, "no usable video stream, only cover art")
 			} else {
-				t.skip("no usable video stream", path)
+				t.skip(i, n, path, "no usable video stream")
 			}
 		} else {
-			t.skip("multiple video streams, e.g. 3D MVC - not safe to re-encode", path)
+			t.skip(i, n, path, "multiple video streams, e.g. 3D MVC - not safe to re-encode")
 		}
 		return
 	}
@@ -403,14 +426,14 @@ func (t *tool) processFile(path string) {
 	// Dolby Vision: hardware HEVC encoders cannot rewrite the DV RPU
 	// layer, a re-encode downgrades the file to plain HDR10/SDR
 	if info.IsDolbyVision() && !cfg.Force {
-		t.skip("Dolby Vision would be lost in re-encode", path)
+		t.skip(i, n, path, "Dolby Vision would be lost in re-encode")
 		return
 	}
 	if info.IsDolbyVision() {
-		fmt.Fprintf(t.out, "Forcing re-encode of Dolby Vision source (DV layer WILL be lost): %s\n", path)
+		t.rep.Notice(i, n, path, "Forcing re-encode of Dolby Vision source (DV layer WILL be lost)")
 	}
 	if info.IsHDR10Plus() {
-		fmt.Fprintln(os.Stderr, "  note: HDR10+ dynamic metadata will be dropped, static HDR10 stays:", path)
+		t.rep.Note(fmt.Sprintf("  note: HDR10+ dynamic metadata will be dropped, static HDR10 stays: %s", path))
 	}
 
 	var outFmt string
@@ -420,27 +443,27 @@ func (t *tool) processFile(path string) {
 	case encoders.ModeChromecast:
 		base := filepath.Base(path)
 		if strings.HasSuffix(base, "_CC4_FIXED.mkv") {
-			t.skip("already a Chromecast conversion", path)
+			t.skip(i, n, path, "already a Chromecast conversion")
 			return
 		}
 		outPath = filepath.Join(filepath.Dir(path), strings.TrimSuffix(base, filepath.Ext(path))+"_CC4_FIXED.mkv")
 		if _, err := os.Stat(outPath); err == nil {
-			t.skip("output %s already exists", outPath, path)
+			t.skip(i, n, path, fmt.Sprintf("output %s already exists", outPath))
 			return
 		}
 		outFmt = "matroska"
 	default:
 		backupPath := path + ".old"
 		if _, err := os.Stat(backupPath); err == nil {
-			t.skip("backup %s already exists", backupPath, path)
+			t.skip(i, n, path, fmt.Sprintf("backup %s already exists", backupPath))
 			return
 		}
 		if !convertibleSource(v.CodecName) && !cfg.Force {
-			t.skip("video codec is '%s', not convertible (want h264 or vc1)", v.CodecName, path)
+			t.skip(i, n, path, fmt.Sprintf("video codec is '%s', not convertible (want h264 or vc1)", v.CodecName))
 			return
 		}
 		if !convertibleSource(v.CodecName) {
-			fmt.Fprintf(t.out, "Forcing re-encode of %s source: %s\n", v.CodecName, path)
+			t.rep.Notice(i, n, path, fmt.Sprintf("Forcing re-encode of %s source", v.CodecName))
 		}
 		outPath = path
 		// container rule: MKV stays MKV, every other source (mp4 and the
@@ -492,12 +515,9 @@ func (t *tool) processFile(path string) {
 
 	if cfg.DryRun {
 		if cfg.Mode == encoders.ModeChromecast {
-			fmt.Fprintf(t.out, "Would create: %s (source %s%s)\n", outPath, media.HumanBytes(srcSize), scaleSuffix(scaleInfo))
+			t.rep.Would("Would create", i, n, outPath, fmt.Sprintf("source %s%s", media.HumanBytes(srcSize), scaleSuffix(scaleInfo)), cleanupLines...)
 		} else {
-			fmt.Fprintf(t.out, "Would convert: %s (%s, %s%s)\n", path, media.HumanBytes(srcSize), plan, scaleSuffix(scaleInfo))
-		}
-		for _, line := range cleanupLines {
-			fmt.Fprintf(t.out, "  - %s\n", line)
+			t.rep.Would("Would convert", i, n, path, fmt.Sprintf("%s, %s%s", media.HumanBytes(srcSize), plan, scaleSuffix(scaleInfo)), cleanupLines...)
 		}
 		t.converted++
 		return
@@ -508,28 +528,31 @@ func (t *tool) processFile(path string) {
 	srcKbps := sourceVideoKbps(real[0].Stream, info, srcSize)
 	plan = t.enc.PlanInfo(cfg.Mode, cfg.CQ, srcKbps)
 
-	fmt.Fprintf(t.out, "Processing: %s (%s)\n", path, media.HumanBytes(srcSize))
-	fmt.Fprintf(t.out, "  plan: %s%s\n", plan, scaleSuffix(scaleInfo))
-	for _, line := range cleanupLines {
-		fmt.Fprintf(t.out, "  - %s\n", line)
-	}
+	details := []string{fmt.Sprintf("plan: %s%s", plan, scaleSuffix(scaleInfo))}
+	details = append(details, cleanupLines...)
 	switch v.ColorTransfer {
 	case "smpte2084":
 		if tonemapped {
-			fmt.Fprintln(t.out, "  HDR10 source: tonemapping to SDR bt709 (bt2390)")
+			details = append(details, "HDR10 source: tonemapping to SDR bt709 (bt2390)")
 		} else {
-			fmt.Fprintln(t.out, "  HDR10 source: mastering display + light level metadata preserved")
+			details = append(details, "HDR10 source: mastering display + light level metadata preserved")
 		}
 	case "arib-std-b67":
 		if tonemapped {
-			fmt.Fprintln(t.out, "  HLG source: tonemapping to SDR bt709 (bt2390)")
+			details = append(details, "HLG source: tonemapping to SDR bt709 (bt2390)")
 		} else {
-			fmt.Fprintln(t.out, "  HLG source: color metadata preserved")
+			details = append(details, "HLG source: color metadata preserved")
 		}
 	}
 	if v.IsInterlaced() {
-		fmt.Fprintf(t.out, "  interlaced source (%s): deinterlacing\n", v.FieldOrder)
+		details = append(details, fmt.Sprintf("interlaced source (%s): deinterlacing", v.FieldOrder))
 	}
+	srcDur := time.Duration(0)
+	if d, ok := info.Duration(); ok {
+		srcDur = time.Duration(d * float64(time.Second))
+	}
+	fileStart := time.Now()
+	t.rep.Start("Processing", i, n, path, media.HumanBytes(srcSize), srcDur, details...)
 
 	audioArgs, appended := t.audioPlan(info, keptAudio)
 
@@ -549,7 +572,7 @@ func (t *tool) processFile(path string) {
 
 	attempts := t.attemptsFor(v, tonemapped, scaling)
 	if len(attempts) == 0 {
-		t.skip("tonemap requested but the %s backend cannot tonemap and ffmpeg has no libplacebo filter", t.enc.Label, path)
+		t.skip(i, n, path, fmt.Sprintf("tonemap requested but the %s backend cannot tonemap and ffmpeg has no libplacebo filter", t.enc.Label))
 		return
 	}
 
@@ -563,10 +586,16 @@ func (t *tool) processFile(path string) {
 	}()
 
 	var lastStderr []byte
+	// interactive runs render their own progress from ffmpeg's stats and
+	// drop the raw passthrough; verbose keeps the raw log visible
+	var onStats func(elapsed time.Duration, speed string)
+	if t.rep.Interactive() && !cfg.Verbose {
+		onStats = t.rep.Progress
+	}
 	for i, a := range attempts {
-		fmt.Fprintf(t.out, "  encoding with %s (attempt %d/%d: %s)...\n", t.enc.Label, i+1, len(attempts), a.label)
+		t.rep.Attempt(t.enc.Label, a.label, i+1, len(attempts))
 		args := t.encodeArgs(path, tmp, outFmt, muxArgs, cover, dropArgs, audioArgs, v, srcKbps, tonemapped, a)
-		stderr, err := t.r.Stream(t.ffmpegBin, args...)
+		stderr, err := run.StreamProgress(t.r, t.ffmpegBin, onStats, args...)
 		if err == nil {
 			lastStderr = stderr
 			break
@@ -577,15 +606,15 @@ func (t *tool) processFile(path string) {
 		// stop everything, the TmpGuard has cleaned the temp file
 		var ee *exec.ExitError
 		if errors.As(err, &ee) && ee.ExitCode() < 0 {
-			fmt.Fprintf(t.out, "Interrupted, %s left untouched.\n", path)
+			t.rep.Raw(ui.BadTone, "Interrupted, %s left untouched.\n", path)
+			t.failures = append(t.failures, ui.Failure{Path: path, Msg: "interrupted"})
 			t.failed++
 			return
 		}
 		slog.Debug("encode attempt failed", "path", path, "attempt", i+1, "err", err)
-		fmt.Fprintf(t.out, "  attempt %d (%s) failed...\n", i+1, a.label)
+		t.rep.AttemptFailed(a.label, i+1, len(attempts))
 		if i == len(attempts)-1 {
-			fmt.Fprintf(t.out, "Error: failed to convert %s (left untouched)\n", path)
-			t.failed++
+			t.fail(path, fmt.Sprintf("failed to convert %s (left untouched)", path), run.LastErrLine(lastStderr))
 			return
 		}
 	}
@@ -593,21 +622,20 @@ func (t *tool) processFile(path string) {
 	// damaged sources decode with errors yet still exit 0; the captured
 	// log tells how bad it was
 	if n := countDecodeErrors(lastStderr); n > 0 {
-		fmt.Fprintf(os.Stderr, "  warning: source has damaged video data (%d decode errors); output may glitch at those spots\n", n)
+		t.rep.Note(fmt.Sprintf("  warning: source has damaged video data (%d decode errors); output may glitch at those spots", n))
 	}
 
 	if cfg.Mode == encoders.ModeChromecast {
 		if err := os.Rename(tmp, outPath); err != nil {
-			fmt.Fprintf(t.out, "Error: cannot finalize %s: %v\n", outPath, err)
-			t.failed++
+			t.fail(outPath, fmt.Sprintf("cannot finalize %s: %v", outPath, err), "")
 			return
 		}
-		fmt.Fprintf(t.out, "Created: %s (original kept)\n", outPath)
+		t.rep.Success("Created", outPath, 0, 0, false, time.Since(fileStart))
 		t.converted++
 		return
 	}
 
-	t.verifyAndSwap(path, tmp, info, srcSize, gate)
+	t.verifyAndSwap(i, n, path, tmp, info, srcSize, gate, time.Since(fileStart))
 }
 
 func scaleSuffix(scaleInfo string) string {
@@ -855,18 +883,16 @@ func sourceVideoKbps(v probe.Stream, info *probe.Info, srcSize int64) int {
 
 // verifyAndSwap applies the safety gates and swaps the file in place with a
 // .old backup.
-func (t *tool) verifyAndSwap(path, tmp string, info *probe.Info, srcSize int64, gate streamGate) {
+func (t *tool) verifyAndSwap(i, n int, path, tmp string, info *probe.Info, srcSize int64, gate streamGate, took time.Duration) {
 	srcDur, srcOK := info.Duration()
 	tmpInfo, err := probe.Probe(t.r, t.ffprobeBin, tmp)
 	if err != nil {
-		fmt.Fprintf(t.out, "Error: cannot probe the output: %v\n", err)
-		t.failed++
+		t.fail(path, fmt.Sprintf("cannot probe the output: %v", err), "")
 		return
 	}
 	newDur, newOK := tmpInfo.Duration()
 	if srcOK && newOK && !gates.DurationKept(newDur, srcDur, 0.99) {
-		fmt.Fprintf(t.out, "Error: output (%.3fs) is much shorter than source (%.3fs) - damaged source, keeping original\n", newDur, srcDur)
-		t.failed++
+		t.fail(path, fmt.Sprintf("output (%.3fs) is much shorter than source (%.3fs) - damaged source, keeping original", newDur, srcDur), "")
 		return
 	}
 
@@ -877,34 +903,34 @@ func (t *tool) verifyAndSwap(path, tmp string, info *probe.Info, srcSize int64, 
 		newSubs := countStreamsOfType(tmpInfo, probe.TypeSubtitle)
 		if newTotal != gate.audio || newAc3 != gate.ac3 ||
 			(gate.subs >= 0 && newSubs != gate.subs) {
-			fmt.Fprintf(t.out, "Error: output streams do not match the plan (audio %d/%d, ac3 %d/%d, subs %d/%d) - keeping original\n",
-				newTotal, gate.audio, newAc3, gate.ac3, newSubs, gate.subs)
-			t.failed++
+			t.fail(path, fmt.Sprintf("output streams do not match the plan (audio %d/%d, ac3 %d/%d, subs %d/%d) - keeping original",
+				newTotal, gate.audio, newAc3, gate.ac3, newSubs, gate.subs), "")
 			return
 		}
 	}
 
 	st, err := os.Stat(tmp)
 	if err != nil {
-		fmt.Fprintf(t.out, "Error: output is missing: %v\n", err)
-		t.failed++
+		t.fail(path, fmt.Sprintf("output is missing: %v", err), "")
 		return
 	}
 	if !gates.Shrunk(st.Size(), srcSize) {
-		fmt.Fprintf(t.out, "Skipping (re-encode is not smaller: %s -> %s)%s\n", media.HumanBytes(srcSize), media.HumanBytes(st.Size()), path)
+		// historical rendering: the path glues to the closing paren
+		t.rep.SkipInline(i, n, path, fmt.Sprintf("re-encode is not smaller: %s -> %s", media.HumanBytes(srcSize), media.HumanBytes(st.Size())))
 		t.skipped++
 		return
 	}
 
 	if _, err := backup.Swap(path, tmp); err != nil {
-		fmt.Fprintf(t.out, "Error: %v\n", err)
-		t.failed++
+		t.fail(path, err.Error(), "")
 		return
 	}
 	// hevc-convert.sh parity: the replacement keeps the source's mtime
 	if old, err := os.Stat(path + ".old"); err == nil {
 		os.Chtimes(path, old.ModTime(), old.ModTime())
 	}
-	fmt.Fprintf(t.out, "Converted: %s (%s -> %s, backup: %s.old)\n", path, media.HumanBytes(srcSize), media.HumanBytes(st.Size()), path)
+	t.rep.Success("Converted", path, srcSize, st.Size(), true, took)
+	t.bytesIn += srcSize
+	t.bytesOut += st.Size()
 	t.converted++
 }
