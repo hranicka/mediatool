@@ -81,12 +81,20 @@ func jsonFor(tmpDur float64) func(string) (string, bool) {
 
 func newTestTool(t *testing.T, dir string, ff run.Runner, cfg *Config, out *bytes.Buffer) *tool {
 	t.Helper()
+	audio := audioTarget{kind: "copy"}
+	if cfg.Audio != "" {
+		var err error
+		if audio, err = parseAudio(cfg.Audio); err != nil {
+			t.Fatal(err)
+		}
+	}
 	return &tool{
 		r:          ff,
 		ffmpegBin:  "ffmpeg",
 		ffprobeBin: "ffprobe",
 		enc:        encoders.Encoder{Codec: encoders.CodecHEVC, Kind: encoders.NVENC, Label: "Nvidia NVENC"},
 		cfg:        cfg,
+		audio:      audio,
 		ignores:    mustIgnore(dir, "convert", cfg.Ignores),
 		out:        out,
 		guard:      &run.TmpGuard{},
@@ -452,7 +460,7 @@ func TestConvertMP4MuxArgs(t *testing.T) {
 	tl.processFile(src)
 
 	args := firstEncode(t, ff)
-	if !hasPair(args, "-movflags", "+use_metadata_tags") || !hasPair(args, "-f", "mp4") {
+	if !hasPair(args, "-movflags", "+use_metadata_tags+faststart") || !hasPair(args, "-f", "mp4") {
 		t.Errorf("mp4 mux args missing: %v", args)
 	}
 }

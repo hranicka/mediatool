@@ -4,7 +4,8 @@ Single-binary media library toolkit for MKV/MP4 compaction and management on
 Linux. One `mediatool` binary serves NVIDIA (NVENC), Intel (QSV/VAAPI) and
 AMD (VAAPI via Mesa) machines alike — the encoder is probed at runtime, not
 chosen at build time. 2.0 replaces the retired per-tool generation
-(hevcconverter/ac3converter/cleaner/dupfinder) and the interim bash suite.
+(hevcconverter/ac3converter/cleaner/dupfinder) and the interim bash suite
+(hevc-convert.sh, hevc-tablet.sh and friends).
 
 ## Install
 
@@ -19,7 +20,7 @@ make build      # dist/mediatool
 
 | Command | Purpose |
 |---|---|
-| `convert` | re-encode H.264 video tracks to HEVC (modes: movie, camera, lowq, chromecast) |
+| `convert` | re-encode video to HEVC/AV1 via presets (movie, tv, tablet, camera, lowq, chromecast) |
 | `clean` | remove audio/subtitle tracks of non-whitelisted languages (default: cs + en) |
 | `ac3` | append AC3 640k compatibility tracks for DTS/TrueHD/FLAC audio |
 | `dup` | report duplicate audio tracks (read-only) |
@@ -31,30 +32,62 @@ Run `mediatool <command> -h` for the full flag list of each command.
 ### convert
 
 ```
-mediatool convert [-p movie|camera|lowq|chromecast] [-c hevc|av1] [-e auto|nvenc|qsv|vaapi|sw]
-                   [-q cq] [-r height] [-vaapi_device dev] [-i list] [-f] [-n] <dir>
+mediatool convert [-p movie|tv|tablet|camera|lowq|chromecast]
+                  [-c hevc|av1] [-e auto|nvenc|qsv|vaapi|sw] [-q cq] [-r height]
+                  [-a copy|aac[:bitrate[:channels]]|ac3[:bitrate]] [-tonemap]
+                  [-vaapi_device dev] [-i list] [-f] [-n] <dir|file>
 ```
 
-- `movie` (default): CQ 26 quality target. `camera`: CQ 28, capped at ~65 %
-  of the source video bitrate. `lowq`: CQ 31, capped at ~50 %.
-  `chromecast`: HEVC main@4.1 with a 15M ceiling, written as a new
-  `*_CC4_FIXED.mkv` (originals untouched).
+Presets bundle the common workflows; every preset value is overridable by
+an explicitly passed flag (`-p tablet -r 1080p -q 28 -a copy`):
+
+| preset | quality | scale | HDR | audio |
+|---|---|---|---|---|
+| `movie` (default) | CQ 26 quality target | – | kept | copy |
+| `tv` | CQ 26 | 1080p | → SDR | AC3 compat appended |
+| `tablet` | CQ 33 | 720p | → SDR | AAC 192k stereo |
+| `camera` | CQ 28, capped at ~65 % of the source bitrate | – | – | AAC 128k |
+| `lowq` | CQ 31, capped at ~50 % | – | – | copy |
+| `chromecast` | CQ 22, 15M cap, level 4.1, written as a new `*_CC4_FIXED.mkv` (originals untouched) | – | – | copy |
+
 - `-c av1` targets AV1 instead of HEVC (hardware `av1_nvenc`/`av1_qsv`/
   `av1_vaapi` where available, `libsvtav1` software fallback); HEVC stays
-  the default output. Chromecast mode is HEVC-only (the target device
+  the default output. The chromecast preset is HEVC-only (the target device
   decodes HEVC). GPUs without AV1 hardware encode (e.g. the Intel N100)
   fall back to slow software encoding.
 - Sources: H.264 and VC-1 (`vc1`, including `wmv3`) convert without
   flags; anything else needs `-f`.
-- HDR10/HLG color metadata is preserved (p010 for 10-bit); Dolby Vision
-  sources are skipped (`-f` forces, losing the DV layer); HDR10+ dynamic
-  metadata is dropped (static HDR10 stays).
+- **Tonemap** (`-tonemap`, on by default in tv/tablet): HDR10/HLG sources
+  re-map to SDR bt709 (bt2390) — on NVENC via the GPU-resident CUDA chain
+  (`tonemap_cuda`), otherwise in software through libplacebo when the
+  ffmpeg build has it; with neither available, HDR files are skipped
+  untouched. Without tonemapping, HDR10/HLG metadata is preserved (p010
+  for 10-bit); Dolby Vision sources are skipped (`-f` forces, losing the
+  DV layer); HDR10+ dynamic metadata is dropped (static HDR10 stays).
+- **Audio target** (`-a`): `copy` keeps all audio as-is; `aac[:bitrate[:channels]]`
+  transcodes non-AAC tracks (existing AAC tracks are copied; `-a aac:192k:2`
+  = 192 kbps stereo); `ac3[:bitrate]` appends AC3 compatibility tracks by
+  the `ac3` command's rules, in the same encode pass.
+- **Track cleanup** (`-l cs,en`): audio and subtitle tracks outside the
+  language whitelist are dropped during the encode, by the `clean`
+  command's rules (whitelist expansion, untagged tracks always stay, sole
+  tracks are never removed). The plan lines list every removal; a
+  stream-count gate verifies the output. E.g. the classic one-shot library
+  sweep: `mediatool convert -q 22 -l cs,en <dir>`.
+- **Deinterlace is automatic**: sources flagged interlaced (field order
+  tt/tb/bt/bb) are yadif-deinterlaced before scaling, on every backend.
 - `-r 1080p` downscales only (never upscales), aspect ratio preserved.
+- MKV sources stay MKV; every other container muxes to MP4 with
+  `+faststart`. The walk picks up `.mkv/.mp4` plus the camera formats
+  `.mts/.m2ts/.ts/.mpg/.mpeg/.avi/.mov/.wmv`; MPEG-TS/AVI inputs get
+  `+genpts`. The converted file keeps the source's mtime.
 - Files with several real video streams (3D MVC) are skipped; cover-art
   streams (mjpeg/png/attached_pic) are dropped from the encode.
-- Retry ladder: hardware decode with subtitles → without → software decode.
+- Retry ladder: hardware decode with subtitles → without → software decode
+  (tonemapped HDR files use the CUDA chain first, then libplacebo).
 - Outputs are adopted only when smaller and at least 99 % of the source
-  duration; otherwise the original stays untouched.
+  duration (and, with appended AC3 tracks, only when every track survived);
+  otherwise the original stays untouched.
 
 ### clean
 

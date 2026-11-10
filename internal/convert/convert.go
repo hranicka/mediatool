@@ -1,9 +1,11 @@
-// Package convert re-encodes H.264 video tracks to HEVC, replacing files
-// in place with .old backups (or writing new _CC4_FIXED files in
-// chromecast mode). Port of the bash convert-video.sh suite: quality
-// targets with source-bitrate caps, HDR10/HLG preservation, Dolby Vision
-// skip, cover-art removal, multi-video guard, retry ladder and safety
-// gates.
+// Package convert re-encodes H.264 video tracks to HEVC (or AV1),
+// replacing files in place with .old backups (or writing new _CC4_FIXED
+// files in the chromecast preset). Port of the bash convert-video.sh /
+// hevc-convert.sh suite: named presets bundling the common workflows,
+// quality targets with source-bitrate caps, HDR10/HLG preservation or
+// optional HDR->SDR tonemapping, audio targets (copy / AAC / appended AC3
+// compat tracks), auto-deinterlace, Dolby Vision skip, cover-art removal,
+// multi-video guard, retry ladder and safety gates.
 package convert
 
 import (
@@ -20,7 +22,9 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/hranicka/mediatool/internal/ac3"
 	"github.com/hranicka/mediatool/internal/backup"
+	"github.com/hranicka/mediatool/internal/clean"
 	"github.com/hranicka/mediatool/internal/cli"
 	"github.com/hranicka/mediatool/internal/encoders"
 	"github.com/hranicka/mediatool/internal/gates"
@@ -35,14 +39,31 @@ import (
 // source can decode with errors yet still exit 0.
 var decodeErrRe = regexp.MustCompile(`(?i)invalid nal|error splitting|decoding error|co located pocs|corrupt|error while decoding`)
 
+// sdrColorArgs forces the output color signaling to the SDR bt709 triple;
+// a tonemapped output must not carry HDR metadata.
+var sdrColorArgs = []string{"-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709"}
+
+// ac3MinBR mirrors the ac3 command's default validity threshold: an
+// existing AC3 track counts as a valid conversion from 448 kbps up.
+const ac3MinBR = 448000
+
+// placeboTonemap is the libplacebo software tonemap filter spec (bt.2390
+// EETF to SDR bt709). The availability probe runs this exact string, so a
+// positive probe means the chain will actually work.
+const placeboTonemap = "libplacebo=tonemapping=bt.2390:colorspace=bt709:color_primaries=bt709:color_trc=bt709:format=yuv420p"
+
 // Config holds the convert subcommand settings.
 type Config struct {
 	Dir         string
+	Preset      string
 	Mode        encoders.Mode
 	Codec       encoders.Codec
 	Enc         string
 	CQ          int
 	ScaleHeight int
+	Tonemap     bool
+	Audio       string
+	Langs       string
 	Ignores     []string
 	Force       bool
 	DryRun      bool
@@ -55,37 +76,48 @@ type tool struct {
 	ffprobeBin string
 	enc        encoders.Encoder
 	cfg        *Config
+	audio      audioTarget
+	whitelist  []string
 	ignores    ignore.List
 	out        io.Writer
 	guard      *run.TmpGuard
+	placebo    *bool // memoized libplacebo filter availability
 
 	converted, skipped, failed int
 }
 
+// streamGate records the stream counts the output must carry; the
+// post-encode gate compares them when track cleanup or AC3 appending is
+// active (subs = -1 means "not checked").
+type streamGate struct {
+	check       bool
+	audio, subs int
+	ac3         int
+}
+
+// attempt is one rung of the per-file retry ladder: the decode arguments,
+// the stream policy, the full -vf chain and a human-readable label.
 type attempt struct {
 	decArgs    []string
 	streamArgs []string
+	vf         string
 	label      string
-}
-
-var attempts = []attempt{
-	{[]string{"-hwaccel", "auto"}, []string{"-c:s", "copy", "-c:d", "copy"}, "hw decode, subtitles copied"},
-	{[]string{"-hwaccel", "auto"}, []string{"-sn", "-dn"}, "hw decode, subtitles dropped"},
-	// software decode is more tolerant of damaged streams than hw decoders
-	{nil, []string{"-sn", "-dn"}, "software decode"},
 }
 
 // Run executes the convert subcommand.
 func Run(args []string) error {
 	fs := flag.NewFlagSet("convert", flag.ExitOnError)
 	var cfg Config
-	var mode, scaleArg, codec string
+	var presetName, scaleArg, codec, audioSpec, langArg string
 	var verbose bool
-	fs.StringVar(&mode, "p", "movie", "content mode: movie (default), camera, lowq, chromecast")
+	fs.StringVar(&presetName, "p", "movie", "preset: movie (default), tv, tablet, camera, lowq, chromecast")
 	fs.StringVar(&codec, "c", string(encoders.CodecHEVC), "output codec: hevc (default) or av1")
 	fs.StringVar(&cfg.Enc, "e", "auto", "encoder: auto (probe), nvenc, qsv, vaapi, sw")
-	fs.IntVar(&cfg.CQ, "q", 0, "CQ/CRF value (defaults: movie 26, camera 28, lowq 31, chromecast 22)")
+	fs.IntVar(&cfg.CQ, "q", 0, "CQ/CRF value (defaults: movie/tv 26, camera 28, lowq 31, chromecast 22, tablet 33)")
 	fs.StringVar(&scaleArg, "r", "", "downscale to this height when the source is larger (e.g. 1080p); never upscales")
+	fs.StringVar(&audioSpec, "a", "", "audio target: copy, aac[:bitrate[:channels]] or ac3[:bitrate]; preset default when unset")
+	fs.StringVar(&langArg, "l", "", "keep only audio/subtitle tracks of these languages (comma-separated, e.g. cs,en; like clean, sole tracks stay); unset = keep all")
+	fs.BoolVar(&cfg.Tonemap, "tonemap", false, "tonemap HDR sources to SDR bt709 (preset default when unset)")
 	fs.StringVar(&cfg.VaapiDevice, "vaapi_device", "/dev/dri/renderD128", "VAAPI render device")
 	fs.Var(cli.Ignores{Dst: &cfg.Ignores}, "i", "comma-separated substrings to ignore (also read from the dot ignore files)")
 	fs.BoolVar(&cfg.Force, "f", false, "force re-encoding of sources that are not H.264")
@@ -98,18 +130,25 @@ func Run(args []string) error {
 		slog.SetLogLoggerLevel(slog.LevelDebug)
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(os.Stderr, "usage: mediatool convert [flags] <directory>")
-		return fmt.Errorf("convert needs exactly one directory argument")
+		fmt.Fprintln(os.Stderr, "usage: mediatool convert [flags] <directory|file>")
+		return fmt.Errorf("convert needs exactly one directory or file argument")
 	}
-	dir, err := cli.ResolveMediaTarget(fs.Arg(0), false)
+	target, err := cli.ResolveMediaTarget(fs.Arg(0), true)
 	if err != nil {
 		return err
 	}
-	cfg.Dir = dir
+	cfg.Dir = target
 
-	if cfg.Mode, err = encoders.ParseMode(mode); err != nil {
+	// the preset fills every flag the user did not pass explicitly
+	set := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
+	preset, err := Lookup(presetName)
+	if err != nil {
 		return err
 	}
+	cfg.Preset = presetName
+	applyPreset(preset, set, &cfg, &scaleArg, &audioSpec)
+
 	if cfg.Codec, err = encoders.ParseCodec(codec); err != nil {
 		return err
 	}
@@ -121,6 +160,15 @@ func Run(args []string) error {
 	}
 	if cfg.ScaleHeight, err = parseScaleHeight(scaleArg); err != nil {
 		return err
+	}
+	tAudio, err := parseAudio(audioSpec)
+	if err != nil {
+		return err
+	}
+	cfg.Langs = langArg
+	var whitelist []string
+	if langArg != "" {
+		whitelist = media.ExpandWhitelist(strings.Split(langArg, ","))
 	}
 
 	ffmpegBin, ffprobeBin, err := run.Locate()
@@ -149,7 +197,7 @@ func Run(args []string) error {
 		return err
 	}
 
-	ignores, warnings := ignore.Load(dir, "convert", cfg.Ignores)
+	ignores, warnings := ignore.Load(cli.IgnoresDir(target), "convert", cfg.Ignores)
 	for _, w := range warnings {
 		fmt.Fprintln(os.Stdout, "warning:", w)
 	}
@@ -160,6 +208,8 @@ func Run(args []string) error {
 		ffprobeBin: ffprobeBin,
 		enc:        enc,
 		cfg:        &cfg,
+		audio:      tAudio,
+		whitelist:  whitelist,
 		ignores:    ignores,
 		out:        os.Stdout,
 		guard:      run.NewTmpGuard(),
@@ -193,8 +243,8 @@ func parseScaleHeight(arg string) (int, error) {
 }
 
 // codecModeGuard rejects codec/mode combinations the target device cannot
-// play: chromecast mode exists for Chromecast 4 devices, which decode
-// HEVC only.
+// play: the chromecast preset exists for Chromecast 4 devices, which
+// decode HEVC only.
 func codecModeGuard(c encoders.Codec, m encoders.Mode) error {
 	if m == encoders.ModeChromecast && c != encoders.CodecHEVC {
 		return fmt.Errorf("chromecast mode targets Chromecast 4 devices and outputs HEVC only")
@@ -213,6 +263,28 @@ func convertibleSource(codec string) bool {
 	return false
 }
 
+// isHDRSource reports whether the video track carries HDR transfer
+// metadata a tonemap should re-map: HDR10, HLG and the XYZ transfer of
+// Dolby Vision profile 5.
+func isHDRSource(v probe.Stream) bool {
+	switch v.ColorTransfer {
+	case "smpte2084", "arib-std-b67", "smpte428-1":
+		return true
+	}
+	return false
+}
+
+// needsGenpts reports whether the container family typically carries
+// broken or missing PTS (MPEG-TS/PS dumps, AVI) and benefits from
+// ffmpeg's genpts flag (hevc-convert.sh parity).
+func needsGenpts(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".mts", ".m2ts", ".ts", ".mpg", ".mpeg", ".avi":
+		return true
+	}
+	return false
+}
+
 func (t *tool) runAll() error {
 	cfg := t.cfg
 	cqNote := ""
@@ -222,7 +294,14 @@ func (t *tool) runAll() error {
 	fmt.Fprintf(t.out, "FFmpeg binary : %s\n", t.ffmpegBin)
 	fmt.Fprintf(t.out, "Using encoder : %s (quality value: %d)\n", t.enc.Label, cfg.CQ)
 	fmt.Fprintf(t.out, "Output codec  : %s\n", cfg.Codec)
-	fmt.Fprintf(t.out, "Mode          : %s%s\n", cfg.Mode, cqNote)
+	fmt.Fprintf(t.out, "Preset        : %s%s\n", cfg.Preset, cqNote)
+	fmt.Fprintf(t.out, "Audio target  : %s\n", t.audio.desc())
+	if len(t.whitelist) > 0 {
+		fmt.Fprintf(t.out, "Keep languages: %s (+ no/und tags)\n", strings.Join(t.whitelist, " "))
+	}
+	if cfg.Tonemap {
+		fmt.Fprintln(t.out, "Tonemap       : HDR sources re-map to SDR bt709")
+	}
 	fmt.Fprintf(t.out, "Target        : %s\n", cfg.Dir)
 	fmt.Fprintf(t.out, "Ignore entries: %d\n", t.ignores.Len())
 	if cfg.ScaleHeight > 0 {
@@ -233,16 +312,27 @@ func (t *tool) runAll() error {
 	}
 	fmt.Fprintln(t.out, "==========================================")
 
-	files, err := walk.Media(cfg.Dir)
+	target := cfg.Dir
+	st, err := os.Stat(target)
 	if err != nil {
 		return err
 	}
-	for _, path := range files {
-		if t.ignores.Match(path) {
-			fmt.Fprintf(t.out, "Skipping (ignored): %s\n", path)
-			continue
+	if st.IsDir() {
+		files, err := walk.Media(target)
+		if err != nil {
+			return err
 		}
-		t.processFile(path)
+		for _, path := range files {
+			if t.ignores.Match(path) {
+				fmt.Fprintf(t.out, "Skipping (ignored): %s\n", path)
+				continue
+			}
+			t.processFile(path)
+		}
+	} else if t.ignores.Match(target) {
+		fmt.Fprintf(t.out, "Skipping (ignored): %s\n", target)
+	} else {
+		t.processFile(target)
 	}
 
 	fmt.Fprintln(t.out, "==========================================")
@@ -296,18 +386,19 @@ func (t *tool) processFile(path string) {
 	}
 	v := real[0].Stream
 
+	// tonemap decision: only HDR sources change, a plain re-encode keeps HDR
+	tonemapped := cfg.Tonemap && isHDRSource(v)
+
 	// downscale only when the source is taller than the target
-	var vfParts []string
+	scaling := cfg.ScaleHeight > 0 && v.Height > cfg.ScaleHeight
 	scaleInfo := ""
 	if cfg.ScaleHeight > 0 {
-		if v.Height > cfg.ScaleHeight {
-			vfParts = append(vfParts, fmt.Sprintf("scale=-2:%d:flags=lanczos", cfg.ScaleHeight))
+		if scaling {
 			scaleInfo = fmt.Sprintf("downscale %dx%d -> %dp", v.Width, v.Height, cfg.ScaleHeight)
 		} else {
 			scaleInfo = fmt.Sprintf("size %dx%d, no downscale to %dp", v.Width, v.Height, cfg.ScaleHeight)
 		}
 	}
-	vfParts = append(vfParts, t.enc.Filters(v.Is10Bit())...)
 
 	// Dolby Vision: hardware HEVC encoders cannot rewrite the DV RPU
 	// layer, a re-encode downgrades the file to plain HDR10/SDR
@@ -352,12 +443,13 @@ func (t *tool) processFile(path string) {
 			fmt.Fprintf(t.out, "Forcing re-encode of %s source: %s\n", v.CodecName, path)
 		}
 		outPath = path
-		switch strings.ToLower(filepath.Ext(path)) {
-		case ".mp4":
-			outFmt = "mp4"
-			muxArgs = []string{"-movflags", "+use_metadata_tags"}
-		default:
+		// container rule: MKV stays MKV, every other source (mp4 and the
+		// camera formats) muxes to MP4 (hevc-convert.sh parity)
+		if strings.EqualFold(filepath.Ext(path), ".mkv") {
 			outFmt = "matroska"
+		} else {
+			outFmt = "mp4"
+			muxArgs = []string{"-movflags", "+use_metadata_tags+faststart"}
 		}
 	}
 
@@ -370,11 +462,42 @@ func (t *tool) processFile(path string) {
 		srcSize = st.Size()
 	}
 
+	// track cleanup: drop audio/subtitle tracks outside the language
+	// whitelist (the clean command's rules; sole tracks stay)
+	var dropArgs []string
+	var cleanupLines []string
+	keptAudio := byType[probe.TypeAudio]
+	keptSubs := len(byType[probe.TypeSubtitle])
+	if len(t.whitelist) > 0 {
+		tp := clean.PlanTracks(info, t.whitelist, false)
+		for _, o := range tp.RemoveAudio {
+			dropArgs = append(dropArgs, "-map", fmt.Sprintf("-0:a:%d", o))
+		}
+		for _, o := range tp.RemoveSubs {
+			dropArgs = append(dropArgs, "-map", fmt.Sprintf("-0:s:%d", o))
+		}
+		dropped := map[int]bool{}
+		for _, o := range tp.RemoveAudio {
+			dropped[o] = true
+		}
+		var kept []probe.Typed
+		for _, ta := range keptAudio {
+			if !dropped[ta.Ordinal] {
+				kept = append(kept, ta)
+			}
+		}
+		keptAudio, keptSubs = kept, tp.KeptSubs
+		cleanupLines = tp.Lines
+	}
+
 	if cfg.DryRun {
 		if cfg.Mode == encoders.ModeChromecast {
 			fmt.Fprintf(t.out, "Would create: %s (source %s%s)\n", outPath, media.HumanBytes(srcSize), scaleSuffix(scaleInfo))
 		} else {
 			fmt.Fprintf(t.out, "Would convert: %s (%s, %s%s)\n", path, media.HumanBytes(srcSize), plan, scaleSuffix(scaleInfo))
+		}
+		for _, line := range cleanupLines {
+			fmt.Fprintf(t.out, "  - %s\n", line)
 		}
 		t.converted++
 		return
@@ -387,11 +510,47 @@ func (t *tool) processFile(path string) {
 
 	fmt.Fprintf(t.out, "Processing: %s (%s)\n", path, media.HumanBytes(srcSize))
 	fmt.Fprintf(t.out, "  plan: %s%s\n", plan, scaleSuffix(scaleInfo))
+	for _, line := range cleanupLines {
+		fmt.Fprintf(t.out, "  - %s\n", line)
+	}
 	switch v.ColorTransfer {
 	case "smpte2084":
-		fmt.Fprintln(t.out, "  HDR10 source: mastering display + light level metadata preserved")
+		if tonemapped {
+			fmt.Fprintln(t.out, "  HDR10 source: tonemapping to SDR bt709 (bt2390)")
+		} else {
+			fmt.Fprintln(t.out, "  HDR10 source: mastering display + light level metadata preserved")
+		}
 	case "arib-std-b67":
-		fmt.Fprintln(t.out, "  HLG source: color metadata preserved")
+		if tonemapped {
+			fmt.Fprintln(t.out, "  HLG source: tonemapping to SDR bt709 (bt2390)")
+		} else {
+			fmt.Fprintln(t.out, "  HLG source: color metadata preserved")
+		}
+	}
+	if v.IsInterlaced() {
+		fmt.Fprintf(t.out, "  interlaced source (%s): deinterlacing\n", v.FieldOrder)
+	}
+
+	audioArgs, appended := t.audioPlan(info, keptAudio)
+
+	// stream gate: verify the planned audio/subtitle/AC3 counts survived
+	_, srcAc3 := ac3.CountTracks(info)
+	gate := streamGate{ac3: srcAc3 + appended}
+	switch {
+	case len(t.whitelist) > 0:
+		gate.check = true
+		gate.audio = len(keptAudio) + appended
+		gate.subs = keptSubs
+	case appended > 0:
+		gate.check = true
+		gate.audio = len(byType[probe.TypeAudio]) + appended
+		gate.subs = -1
+	}
+
+	attempts := t.attemptsFor(v, tonemapped, scaling)
+	if len(attempts) == 0 {
+		t.skip("tonemap requested but the %s backend cannot tonemap and ffmpeg has no libplacebo filter", t.enc.Label, path)
+		return
 	}
 
 	tmp := fmt.Sprintf("%s.%d.tmp", outPath, os.Getpid())
@@ -406,7 +565,7 @@ func (t *tool) processFile(path string) {
 	var lastStderr []byte
 	for i, a := range attempts {
 		fmt.Fprintf(t.out, "  encoding with %s (attempt %d/%d: %s)...\n", t.enc.Label, i+1, len(attempts), a.label)
-		args := t.encodeArgs(path, tmp, outFmt, muxArgs, cover, vfParts, v, srcKbps, a)
+		args := t.encodeArgs(path, tmp, outFmt, muxArgs, cover, dropArgs, audioArgs, v, srcKbps, tonemapped, a)
 		stderr, err := t.r.Stream(t.ffmpegBin, args...)
 		if err == nil {
 			lastStderr = stderr
@@ -448,7 +607,7 @@ func (t *tool) processFile(path string) {
 		return
 	}
 
-	t.verifyAndSwap(path, tmp, info, srcSize)
+	t.verifyAndSwap(path, tmp, info, srcSize, gate)
 }
 
 func scaleSuffix(scaleInfo string) string {
@@ -458,23 +617,184 @@ func scaleSuffix(scaleInfo string) string {
 	return ", " + scaleInfo
 }
 
+// attemptsFor builds the per-file retry ladder. Normal files use the
+// three-step decode ladder (hw with subtitles, hw without, software —
+// more tolerant of damaged streams). Tonemapped HDR files on NVENC swap
+// in a GPU-resident CUDA chain; other backends (or a failed CUDA run)
+// fall back to software tonemapping through libplacebo when the ffmpeg
+// build has it.
+func (t *tool) attemptsFor(v probe.Stream, tonemapped, scaling bool) []attempt {
+	hwAuto := []string{"-hwaccel", "auto"}
+	subsCopy := []string{"-c:s", "copy", "-c:d", "copy"}
+	noSubs := []string{"-sn", "-dn"}
+
+	if !tonemapped {
+		chain := strings.Join(t.normalChain(v, scaling), ",")
+		return []attempt{
+			{decArgs: hwAuto, streamArgs: subsCopy, vf: chain, label: "hw decode, subtitles copied"},
+			{decArgs: hwAuto, streamArgs: noSubs, vf: chain, label: "hw decode, subtitles dropped"},
+			{decArgs: nil, streamArgs: noSubs, vf: chain, label: "software decode"},
+		}
+	}
+
+	placebo := attempt{
+		decArgs:    hwAuto,
+		streamArgs: noSubs,
+		vf:         strings.Join(t.placeboChain(v, scaling), ","),
+		label:      "software decode, tonemap (libplacebo)",
+	}
+	if t.enc.Kind == encoders.NVENC {
+		cudaChain := strings.Join(t.cudaChain(v, scaling), ",")
+		attempts := []attempt{
+			{decArgs: t.enc.CUDADecodeArgs(), streamArgs: subsCopy, vf: cudaChain, label: "cuda decode, tonemap, subtitles copied"},
+			{decArgs: t.enc.CUDADecodeArgs(), streamArgs: noSubs, vf: cudaChain, label: "cuda decode, tonemap, subtitles dropped"},
+		}
+		if t.hasLibplacebo() {
+			attempts = append(attempts, placebo)
+		}
+		return attempts
+	}
+	if !t.hasLibplacebo() {
+		return nil
+	}
+	return []attempt{placebo}
+}
+
+// normalChain builds the system-memory filter chain: deinterlace first
+// (scaling interlaced frames would smear them), then the optional
+// downscale, then the encoder's format/upload fragments.
+func (t *tool) normalChain(v probe.Stream, scaling bool) []string {
+	var parts []string
+	if v.IsInterlaced() {
+		parts = append(parts, "yadif=mode=send_frame:parity=auto")
+	}
+	if scaling {
+		parts = append(parts, fmt.Sprintf("scale=-2:%d:flags=lanczos", t.cfg.ScaleHeight))
+	}
+	parts = append(parts, t.enc.Filters(v.Is10Bit())...)
+	return parts
+}
+
+// cudaChain builds the GPU-resident chain for tonemapping on NVENC:
+// deinterlace and scale on the GPU, then the bt2390 tonemap to SDR bt709
+// (heir of hevc-tablet.sh).
+func (t *tool) cudaChain(v probe.Stream, scaling bool) []string {
+	var parts []string
+	if v.IsInterlaced() {
+		parts = append(parts, "yadif_cuda=mode=send_frame:parity=auto")
+	}
+	if scaling {
+		parts = append(parts, fmt.Sprintf("scale_cuda=%d:%d", evenWidth(v.Width, v.Height, t.cfg.ScaleHeight), t.cfg.ScaleHeight))
+	}
+	parts = append(parts, "tonemap_cuda=tonemap=bt2390:desat=0:primaries=bt709:transfer=bt709:matrix=bt709:format=nv12")
+	return parts
+}
+
+// placeboChain tonemaps in software — it works with every encoder but
+// needs the libplacebo filter in the ffmpeg build — and continues with
+// the normal system-memory chain. The tonemapped frames are 8-bit SDR,
+// so the upload always uses nv12.
+func (t *tool) placeboChain(v probe.Stream, scaling bool) []string {
+	var parts []string
+	if v.IsInterlaced() {
+		parts = append(parts, "yadif=mode=send_frame:parity=auto")
+	}
+	if scaling {
+		parts = append(parts, fmt.Sprintf("scale=-2:%d:flags=lanczos", t.cfg.ScaleHeight))
+	}
+	parts = append(parts, placeboTonemap)
+	parts = append(parts, t.enc.Filters(false)...)
+	return parts
+}
+
+// evenWidth computes the aspect-preserving, even-rounded width for a
+// target height (scale_cuda needs explicit dimensions).
+func evenWidth(width, height, targetH int) int {
+	w := width * targetH / height
+	return w / 2 * 2
+}
+
+// hasLibplacebo reports (memoized) whether the ffmpeg build carries a
+// working libplacebo tonemap chain, the software tonemapping fallback.
+func (t *tool) hasLibplacebo() bool {
+	if t.placebo == nil {
+		ok := encoders.HasFilter(t.r, t.ffmpegBin, placeboTonemap)
+		t.placebo = &ok
+	}
+	return *t.placebo
+}
+
+// audioPlan builds the audio encoding arguments for one file's kept audio
+// streams and returns how many AC3 compatibility tracks get appended (for
+// the stream-count gate). Per-stream output ordinals are positions among
+// the kept tracks — input ordinals shift when the language cleanup drops
+// tracks. Existing AAC tracks survive an aac target untouched; the ac3
+// target appends via the ac3 command's planning rules for kept
+// DTS/TrueHD/FLAC tracks.
+func (t *tool) audioPlan(info *probe.Info, keptAudio []probe.Typed) (args []string, appended int) {
+	switch t.audio.kind {
+	case "copy":
+		return []string{"-c:a", "copy"}, 0
+	case "aac":
+		for out, ta := range keptAudio {
+			if ta.Stream.CodecName == "aac" {
+				args = append(args, fmt.Sprintf("-c:a:%d", out), "copy")
+				continue
+			}
+			args = append(args, fmt.Sprintf("-c:a:%d", out), "aac", fmt.Sprintf("-b:a:%d", out), t.audio.bitrate)
+			if t.audio.channels > 0 {
+				args = append(args, fmt.Sprintf("-ac:%d", out), strconv.Itoa(t.audio.channels))
+			}
+		}
+		return args, 0
+	default: // ac3
+		args = []string{"-c:a", "copy"}
+		keptOrdinals := map[int]bool{}
+		for _, ta := range keptAudio {
+			keptOrdinals[ta.Ordinal] = true
+		}
+		var plans []ac3.PlanEntry
+		for _, p := range ac3.PlanCompat(info, ac3MinBR) {
+			if keptOrdinals[p.Ordinal] {
+				plans = append(plans, p)
+			}
+		}
+		for i, p := range plans {
+			out := len(keptAudio) + i
+			args = append(args, "-map", fmt.Sprintf("0:a:%d", p.Ordinal),
+				fmt.Sprintf("-c:a:%d", out), "ac3", fmt.Sprintf("-b:a:%d", out), t.audio.bitrate)
+		}
+		return args, len(plans)
+	}
+}
+
 // encodeArgs assembles one ffmpeg invocation for the current attempt.
-func (t *tool) encodeArgs(src, dst, outFmt string, muxArgs []string, cover []int, vfParts []string, v probe.Stream, srcKbps int, a attempt) []string {
+func (t *tool) encodeArgs(src, dst, outFmt string, muxArgs []string, cover []int, dropArgs, audioArgs []string, v probe.Stream, srcKbps int, tonemapped bool, a attempt) []string {
 	args := []string{"-hide_banner", "-loglevel", "error", "-stats", "-nostdin", "-y"}
 	args = append(args, t.enc.InputArgs(t.cfg.VaapiDevice)...)
+	if needsGenpts(src) {
+		args = append(args, "-fflags", "+genpts")
+	}
 	args = append(args, a.decArgs...)
 	args = append(args, "-i", src)
 	args = append(args, "-map", "0", "-map_metadata", "0", "-map_chapters", "0")
 	for _, o := range cover {
 		args = append(args, "-map", fmt.Sprintf("-0:v:%d", o))
 	}
-	if len(vfParts) > 0 {
-		args = append(args, "-vf", strings.Join(vfParts, ","))
+	args = append(args, dropArgs...)
+	if a.vf != "" {
+		args = append(args, "-vf", a.vf)
 	}
 	args = append(args, t.enc.VideoArgs(t.cfg.Mode, t.cfg.CQ, srcKbps)...)
-	args = append(args, t.enc.PixFmtArgs(v.Is10Bit())...)
-	args = append(args, colorArgs(v)...)
-	args = append(args, "-c:a", "copy")
+	if tonemapped {
+		// the output is SDR; no HDR pixel format or color signaling may
+		// leak onto it
+		args = append(args, sdrColorArgs...)
+	} else {
+		args = append(args, t.enc.PixFmtArgs(v.Is10Bit())...)
+		args = append(args, colorArgs(v)...)
+	}
+	args = append(args, audioArgs...)
 	args = append(args, a.streamArgs...)
 	args = append(args, muxArgs...)
 	return append(args, "-f", outFmt, dst)
@@ -507,6 +827,17 @@ func countDecodeErrors(log []byte) int {
 	return n
 }
 
+// countStreamsOfType tallies the streams of one codec_type.
+func countStreamsOfType(info *probe.Info, kind string) int {
+	n := 0
+	for _, s := range info.Streams {
+		if s.CodecType == kind {
+			n++
+		}
+	}
+	return n
+}
+
 // sourceVideoKbps determines the source video bitrate: the video stream's
 // own bitrate first, then size/duration as a whole-file estimate (the
 // container bitrate is not consulted — it measures audio and subtitles
@@ -524,7 +855,7 @@ func sourceVideoKbps(v probe.Stream, info *probe.Info, srcSize int64) int {
 
 // verifyAndSwap applies the safety gates and swaps the file in place with a
 // .old backup.
-func (t *tool) verifyAndSwap(path, tmp string, info *probe.Info, srcSize int64) {
+func (t *tool) verifyAndSwap(path, tmp string, info *probe.Info, srcSize int64, gate streamGate) {
 	srcDur, srcOK := info.Duration()
 	tmpInfo, err := probe.Probe(t.r, t.ffprobeBin, tmp)
 	if err != nil {
@@ -537,6 +868,20 @@ func (t *tool) verifyAndSwap(path, tmp string, info *probe.Info, srcSize int64) 
 		fmt.Fprintf(t.out, "Error: output (%.3fs) is much shorter than source (%.3fs) - damaged source, keeping original\n", newDur, srcDur)
 		t.failed++
 		return
+	}
+
+	// track cleanup and appended AC3 tracks must survive the mux exactly
+	// as planned (clean/ac3 command parity)
+	if gate.check {
+		newTotal, newAc3 := ac3.CountTracks(tmpInfo)
+		newSubs := countStreamsOfType(tmpInfo, probe.TypeSubtitle)
+		if newTotal != gate.audio || newAc3 != gate.ac3 ||
+			(gate.subs >= 0 && newSubs != gate.subs) {
+			fmt.Fprintf(t.out, "Error: output streams do not match the plan (audio %d/%d, ac3 %d/%d, subs %d/%d) - keeping original\n",
+				newTotal, gate.audio, newAc3, gate.ac3, newSubs, gate.subs)
+			t.failed++
+			return
+		}
 	}
 
 	st, err := os.Stat(tmp)
@@ -555,6 +900,10 @@ func (t *tool) verifyAndSwap(path, tmp string, info *probe.Info, srcSize int64) 
 		fmt.Fprintf(t.out, "Error: %v\n", err)
 		t.failed++
 		return
+	}
+	// hevc-convert.sh parity: the replacement keeps the source's mtime
+	if old, err := os.Stat(path + ".old"); err == nil {
+		os.Chtimes(path, old.ModTime(), old.ModTime())
 	}
 	fmt.Fprintf(t.out, "Converted: %s (%s -> %s, backup: %s.old)\n", path, media.HumanBytes(srcSize), media.HumanBytes(st.Size()), path)
 	t.converted++

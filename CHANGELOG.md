@@ -2,6 +2,42 @@
 
 ## Unreleased
 
+- **Fixed: HDR detection never fired on real files** — the ffprobe parser
+  read the `color_trc` JSON key, but ffprobe (any version) emits
+  `color_transfer`. HDR10/HLG sources were re-encoded without color
+  signaling and the HDR notes never printed; the tests passed only
+  because their fixtures hand-wrote the wrong key. With the fix, HDR
+  metadata is preserved (or tonemapped) as documented.
+- `convert`: **presets replace the quality modes** — `-p` now selects a
+  whole workflow: `movie` (default, HDR kept, audio copied), `tv` (1080p
+  downscale, HDR→SDR, AC3 compat appended), `tablet` (720p, CQ 33,
+  HDR→SDR, AAC 192k stereo), `camera` (bitrate-capped, AAC 128k), plus
+  `lowq` and `chromecast`. Every preset value is overridable by an
+  explicitly passed flag (`-p tablet -r 1080p -q 28 -a copy`).
+- `convert`: optional **HDR→SDR tonemapping** (`-tonemap`, enabled by the
+  tv/tablet presets) — HDR10/HLG sources re-map to SDR bt709 with bt2390:
+  GPU-resident CUDA chain (`tonemap_cuda`) on NVENC, libplacebo in
+  software on every other backend (probed; missing → the file is skipped
+  untouched instead of silently keeping HDR).
+- `convert`: **audio targets** (`-a copy|aac[:bitrate[:channels]]|ac3[:bitrate]`)
+  — AAC transcodes non-AAC tracks (existing AAC tracks are copied) with an
+  optional stereo downmix; `ac3` appends AC3 compatibility tracks by the
+  `ac3` command's rules in the same encode pass, verified by an
+  audio-count gate.
+- `convert`: **track cleanup** (`-l cs,en`) — audio and subtitle tracks
+  outside the language whitelist are dropped during the encode by the
+  `clean` command's rules (extracted into the shared `clean.PlanTracks`),
+  with plan lines and a stream-count gate. Combined with `-q`, this
+  restores the flexible one-shot workflow (`mediatool convert -q 22
+  -l cs,en <dir>`).
+- `convert`: **auto-deinterlace** — sources flagged interlaced (field
+  order tt/tb/bt/bb) are yadif-deinterlaced before scaling on every
+  backend (`yadif_cuda` in the CUDA chain).
+- The media walk picks up the camera formats `.mts/.m2ts/.ts/.mpg/.mpeg/
+  .avi/.mov/.wmv` in all commands (single-file targets included).
+  `convert` muxes non-MKV sources to MP4 (`+faststart`), applies
+  `+genpts` to MPEG-TS/AVI inputs, accepts a single file as its target,
+  and the converted file keeps the source's mtime.
 - `convert`: simpler bitrate caps — sources whose cap would fall below a
   sane minimum (~800k camera / ~600k lowq) get no cap at all (pure
   quality targeting, size gate as backstop) instead of floor-clamped caps
@@ -10,9 +46,9 @@
   and subtitles too; the size/duration estimate covers it).
 - `convert`: new `-c` output codec flag — `av1` targets AV1
   (av1_nvenc/av1_qsv/av1_vaapi, libsvtav1 software fallback) while HEVC
-  stays the default; chromecast mode rejects AV1 (Chromecast 4 devices
-  decode HEVC only). The `-e` software encoder value is now `sw` (`x265`
-  remains as a deprecated alias).
+  stays the default; the chromecast preset rejects AV1 (Chromecast 4
+  devices decode HEVC only). The `-e` software encoder value is now `sw`
+  (`x265` remains as a deprecated alias).
 - `convert`: VC-1 sources (`vc1`, including `wmv3`) now convert without
   `-f`, like H.264 sources.
 - Dot ignore files are honored along the whole target path: the search

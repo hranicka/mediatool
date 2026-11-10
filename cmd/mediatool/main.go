@@ -22,7 +22,7 @@ const usageText = `MediaTool 2.0 — media library compaction and management.
 Usage: mediatool <command> [flags]
 
 Commands:
-  convert   re-encode H.264 video tracks to HEVC (nvenc/qsv/vaapi/x265)
+  convert   re-encode video to HEVC/AV1 via presets (movie/tv/tablet/camera)
   clean     remove audio/subtitle tracks of non-whitelisted languages
   ac3       append AC3 compatibility tracks for DTS/TrueHD/FLAC audio
   dup       report duplicate audio tracks (read-only)

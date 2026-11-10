@@ -171,6 +171,23 @@ func (e Encoder) InputArgs(vaapiDevice string) []string {
 	return nil
 }
 
+// CUDADecodeArgs keeps decoded frames on the GPU so the CUDA-only filter
+// chain (scale_cuda/yadif_cuda/tonemap_cuda) can run before a hardware
+// encode.
+func (e Encoder) CUDADecodeArgs() []string {
+	return []string{"-hwaccel", "cuda", "-hwaccel_output_format", "cuda"}
+}
+
+// HasFilter probes whether the ffmpeg build supports a filter, using a
+// tiny lavfi encode (same pattern as the encoder probe).
+func HasFilter(r run.Runner, ffmpegBin, filter string) bool {
+	args := []string{"-hide_banner", "-v", "error", "-nostdin",
+		"-f", "lavfi", "-i", "color=c=black:s=320x240:d=0.2:r=30", "-frames:v", "5",
+		"-vf", filter, "-f", "null", "-"}
+	_, err := r.Output(ffmpegBin, args...)
+	return err == nil
+}
+
 // Filters returns the source-side filter fragments the encoder requires
 // (VAAPI uploads frames to the GPU; 10-bit sources must become p010,
 // everything else nv12). Callers merge them with their own scale filter
