@@ -3,6 +3,7 @@
 package media
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 
@@ -60,4 +61,19 @@ func IsCoverArt(s probe.Stream) bool {
 		return true
 	}
 	return s.Disposition.AttachedPic == 1
+}
+
+// HumanBytes formats a byte count in IEC units (1024 base), mirroring
+// numfmt --to=iec ("98K", "1.2G").
+func HumanBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d", n)
+	}
+	div, exp := int64(unit), 0
+	for m := n / unit; m >= unit; m /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.0f%c", float64(n)/float64(div), "KMGTPE"[exp])
 }
