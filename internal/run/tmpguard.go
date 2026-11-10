@@ -1,6 +1,7 @@
 package run
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -22,6 +23,7 @@ func NewTmpGuard() *TmpGuard {
 	signal.Notify(ch, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		<-ch
+		fmt.Fprintln(os.Stderr, "interrupted; cleaning up temp files")
 		g.Cleanup()
 		os.Exit(130)
 	}()
