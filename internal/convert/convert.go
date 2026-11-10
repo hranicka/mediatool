@@ -7,11 +7,14 @@
 package convert
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -99,6 +102,9 @@ func Run(args []string) error {
 	if err != nil {
 		return fmt.Errorf("cannot resolve directory: %w", err)
 	}
+	if resolved, linkErr := filepath.EvalSymlinks(dir); linkErr == nil {
+		dir = resolved
+	}
 	info, err := os.Stat(dir)
 	if err != nil || !info.IsDir() {
 		return fmt.Errorf("directory %s does not exist", dir)
@@ -153,7 +159,7 @@ func Run(args []string) error {
 // lines.
 func selectEncoder(r run.Runner, w io.Writer, ffmpegBin, vaapiDevice string, candidates []encoders.Kind) (encoders.Encoder, error) {
 	for _, k := range candidates {
-		e := encoders.Encoder{Kind: k}
+		e := encoders.Encoder{Kind: k, Label: k.Label()}
 		fmt.Fprintf(w, "Testing encoder: %s...\n", e.Label)
 		chosen, err := encoders.Probe(r, ffmpegBin, vaapiDevice, []encoders.Kind{k})
 		if err == nil {
@@ -260,12 +266,12 @@ func (t *tool) processFile(path string) {
 	if len(real) != 1 {
 		if len(real) == 0 {
 			if len(byType[probe.TypeVideo]) > 0 {
-				t.skip("no usable video stream, only cover art%s", path)
+				t.skip("no usable video stream, only cover art", path)
 			} else {
-				t.skip("no usable video stream%s", path)
+				t.skip("no usable video stream", path)
 			}
 		} else {
-			t.skip("multiple video streams, e.g. 3D MVC - not safe to re-encode%s", path)
+			t.skip("multiple video streams, e.g. 3D MVC - not safe to re-encode", path)
 		}
 		return
 	}
@@ -287,14 +293,14 @@ func (t *tool) processFile(path string) {
 	// Dolby Vision: hardware HEVC encoders cannot rewrite the DV RPU
 	// layer, a re-encode downgrades the file to plain HDR10/SDR
 	if info.IsDolbyVision() && !cfg.Force {
-		t.skip("Dolby Vision would be lost in re-encode%s", path)
+		t.skip("Dolby Vision would be lost in re-encode", path)
 		return
 	}
 	if info.IsDolbyVision() {
 		fmt.Fprintf(t.out, "Forcing re-encode of Dolby Vision source (DV layer WILL be lost): %s\n", path)
 	}
 	if info.IsHDR10Plus() {
-		fmt.Fprintf(t.out, "  note: HDR10+ dynamic metadata will be dropped, static HDR10 stays: %s\n", path)
+		fmt.Fprintln(os.Stderr, "  note: HDR10+ dynamic metadata will be dropped, static HDR10 stays:", path)
 	}
 
 	var outFmt string
@@ -304,23 +310,23 @@ func (t *tool) processFile(path string) {
 	case encoders.ModeChromecast:
 		base := filepath.Base(path)
 		if strings.HasSuffix(base, "_CC4_FIXED.mkv") {
-			t.skip("already a Chromecast conversion%s", path)
+			t.skip("already a Chromecast conversion", path)
 			return
 		}
 		outPath = filepath.Join(filepath.Dir(path), strings.TrimSuffix(base, filepath.Ext(path))+"_CC4_FIXED.mkv")
 		if _, err := os.Stat(outPath); err == nil {
-			t.skip("output %s already exists%s", path, outPath)
+			t.skip("output %s already exists", outPath, path)
 			return
 		}
 		outFmt = "matroska"
 	default:
 		backupPath := path + ".old"
 		if _, err := os.Stat(backupPath); err == nil {
-			t.skip("backup %s already exists%s", path, backupPath)
+			t.skip("backup %s already exists", backupPath, path)
 			return
 		}
 		if v.CodecName != "h264" && !cfg.Force {
-			t.skip("video codec is '%s', not h264%s", path, v.CodecName)
+			t.skip("video codec is '%s', not h264", v.CodecName, path)
 			return
 		}
 		if v.CodecName != "h264" {
@@ -336,7 +342,7 @@ func (t *tool) processFile(path string) {
 		}
 	}
 
-	plan := cfg.Mode.PlanInfo(cfg.CQ, 0)
+	plan := t.enc.PlanInfo(cfg.Mode, cfg.CQ, 0)
 	srcSize := int64(0)
 	if s, ok := info.Size(); ok {
 		srcSize = s
@@ -358,9 +364,9 @@ func (t *tool) processFile(path string) {
 	// bitrate-capped modes target a fraction of the source video bitrate
 	// per file; the plan line is computed once the bitrate is known
 	srcKbps := sourceVideoKbps(real[0].Stream, info, srcSize)
-	plan = cfg.Mode.PlanInfo(cfg.CQ, srcKbps)
+	plan = t.enc.PlanInfo(cfg.Mode, cfg.CQ, srcKbps)
 
-	fmt.Fprintf(t.out, "Converting: %s (%s)\n", path, media.HumanBytes(srcSize))
+	fmt.Fprintf(t.out, "Processing: %s (%s)\n", path, media.HumanBytes(srcSize))
 	fmt.Fprintf(t.out, "  plan: %s%s\n", plan, scaleSuffix(scaleInfo))
 	switch v.ColorTransfer {
 	case "smpte2084":
@@ -389,6 +395,14 @@ func (t *tool) processFile(path string) {
 		}
 		lastStderr = stderr
 		os.Remove(tmp)
+		// an ffmpeg killed by a signal means the run is being torn down:
+		// stop everything, the TmpGuard has cleaned the temp file
+		var ee *exec.ExitError
+		if errors.As(err, &ee) && ee.ExitCode() < 0 {
+			fmt.Fprintf(t.out, "Interrupted, %s left untouched.\n", path)
+			t.failed++
+			return
+		}
 		slog.Debug("encode attempt failed", "path", path, "attempt", i+1, "err", err)
 		fmt.Fprintf(t.out, "  attempt %d (%s) failed...\n", i+1, a.label)
 		if i == len(attempts)-1 {
@@ -401,7 +415,7 @@ func (t *tool) processFile(path string) {
 	// damaged sources decode with errors yet still exit 0; the captured
 	// log tells how bad it was
 	if n := countDecodeErrors(lastStderr); n > 0 {
-		fmt.Fprintf(t.out, "  warning: source has damaged video data (%d decode errors); output may glitch at those spots\n", n)
+		fmt.Fprintf(os.Stderr, "  warning: source has damaged video data (%d decode errors); output may glitch at those spots\n", n)
 	}
 
 	if cfg.Mode == encoders.ModeChromecast {
@@ -428,6 +442,7 @@ func scaleSuffix(scaleInfo string) string {
 // encodeArgs assembles one ffmpeg invocation for the current attempt.
 func (t *tool) encodeArgs(src, dst, outFmt string, muxArgs []string, cover []int, vfParts []string, v probe.Stream, srcKbps int, a attempt) []string {
 	args := []string{"-hide_banner", "-loglevel", "error", "-stats", "-nostdin", "-y"}
+	args = append(args, t.enc.InputArgs(t.cfg.VaapiDevice)...)
 	args = append(args, a.decArgs...)
 	args = append(args, "-i", src)
 	args = append(args, "-map", "0", "-map_metadata", "0", "-map_chapters", "0")
@@ -483,7 +498,8 @@ func sourceVideoKbps(v probe.Stream, info *probe.Info, srcSize int64) int {
 		return br / 1000
 	}
 	if dur, ok := info.Duration(); ok && dur > 0 && srcSize > 0 {
-		return int(float64(srcSize) * 8 / dur / 1000)
+		// bash truncated the duration to integer seconds; keep the parity
+		return int(float64(srcSize) * 8 / math.Trunc(dur) / 1000)
 	}
 	return 0
 }

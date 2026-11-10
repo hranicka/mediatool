@@ -41,6 +41,9 @@ var labels = map[Kind]string{
 	X265:  "software libx265",
 }
 
+// Label returns the human-readable encoder name.
+func (k Kind) Label() string { return labels[k] }
+
 // Encoder is a working HEVC encoder backend on this machine.
 type Encoder struct {
 	Kind  Kind
@@ -208,12 +211,17 @@ func (e Encoder) VideoArgs(m Mode, cq, srcVideoKbps int) []string {
 }
 
 // PlanInfo summarizes the conversion plan for one file, mirroring the bash
-// CAP_INFO line.
-func (m Mode) PlanInfo(cq, srcVideoKbps int) string {
+// CAP_INFO line. The chromecast ceiling note is honest about VAAPI: CQP
+// cannot carry a maxrate, so the cap is enforced encoder-side only where
+// supported.
+func (e Encoder) PlanInfo(m Mode, cq, srcVideoKbps int) string {
 	switch m {
 	case ModeMovie:
 		return fmt.Sprintf("CQ %d quality target", cq)
 	case ModeChromecast:
+		if e.Kind == VAAPI {
+			return fmt.Sprintf("CQ %d quality target (vaapi CQP has no bitrate ceiling)", cq)
+		}
 		return fmt.Sprintf("CQ %d, 15M cap, level 4.1", cq)
 	default:
 		if srcVideoKbps > 0 {

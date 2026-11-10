@@ -3,6 +3,7 @@ package convert
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/hranicka/media-tool/internal/encoders"
 	"github.com/hranicka/media-tool/internal/ignore"
+	"github.com/hranicka/media-tool/internal/probe"
 	"github.com/hranicka/media-tool/internal/run"
 )
 
@@ -538,15 +540,21 @@ func TestConvertDecodeErrorWarning(t *testing.T) {
 
 	ff := &fakeFF{probeFor: jsonFor(600.0), encSize: 500_000,
 		encStderr: "some noise\n[hevc] error while decoding MB 42\nmore noise\n"}
-	out := &bytes.Buffer{}
-	tl := newTestTool(t, dir, ff, &Config{Dir: dir, Mode: encoders.ModeMovie, CQ: 26}, out)
+	// the warning goes to stderr (bash parity) - capture it
+	oldErr := os.Stderr
+	r, w, _ := os.Pipe()
+	os.Stderr = w
+	tl := newTestTool(t, dir, ff, &Config{Dir: dir, Mode: encoders.ModeMovie, CQ: 26}, &bytes.Buffer{})
 	tl.processFile(src)
+	os.Stderr = oldErr
+	w.Close()
+	warn, _ := io.ReadAll(r)
 
 	if tl.converted != 1 {
 		t.Fatalf("convert expected: %+v", tl)
 	}
-	if !strings.Contains(out.String(), "damaged video data (1 decode errors)") {
-		t.Errorf("decode-error warning missing: %s", out.String())
+	if !strings.Contains(string(warn), "damaged video data (1 decode errors)") {
+		t.Errorf("decode-error warning missing: %s", warn)
 	}
 }
 
@@ -590,5 +598,99 @@ func TestParseScaleHeight(t *testing.T) {
 	}
 	if _, err := parseScaleHeight("abc"); err == nil {
 		t.Error("invalid height must fail")
+	}
+}
+
+func TestConvertVAAPIEncode(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "movie.mkv")
+	writeFile(t, src, 1_000_000)
+
+	// 10-bit HDR source: vaapi uploads p010 frames, never -pix_fmt
+	hdrJSON := strings.Replace(h264JSON,
+		`"color_primaries":"unknown","color_trc":"unknown","color_space":"unknown"`,
+		`"color_primaries":"bt2020","color_trc":"smpte2084","color_space":"bt2020nc","pix_fmt":"yuv420p10le"`, 1)
+	ff := &fakeFF{probeFor: func(src string) (string, bool) {
+		if strings.HasSuffix(filepath.Base(src), ".tmp") {
+			return jsonFor(600.0)(src)
+		}
+		return hdrJSON, true
+	}, encSize: 500_000}
+	tl := newTestTool(t, dir, ff, &Config{Dir: dir, Mode: encoders.ModeMovie, CQ: 26, VaapiDevice: "/dev/dri/renderD129"}, &bytes.Buffer{})
+	tl.enc = encoders.Encoder{Kind: encoders.VAAPI, Label: "VAAPI (Intel/AMD)"}
+	tl.processFile(src)
+
+	args := firstEncode(t, ff)
+	if !hasPair(args, "-vaapi_device", "/dev/dri/renderD129") {
+		t.Errorf("real encode must init the vaapi device: %v", args)
+	}
+	if !hasPair(args, "-vf", "format=p010le,hwupload") {
+		t.Errorf("10-bit vaapi filter chain missing: %v", args)
+	}
+	if hasPair(args, "-pix_fmt", "p010le") {
+		t.Errorf("vaapi must not get -pix_fmt: %v", args)
+	}
+	if !hasPair(args, "-c:v", "hevc_vaapi") {
+		t.Errorf("wrong encoder: %v", args)
+	}
+}
+
+func TestSelectEncoder(t *testing.T) {
+	out := &bytes.Buffer{}
+	failNVENC := &failFirstRunner{failProbe: "hevc_nvenc"}
+	enc, err := selectEncoder(failNVENC, out, "ffmpeg", "/dev/dri/renderD128", encoders.Candidates())
+	if err != nil {
+		t.Fatalf("selectEncoder: %v", err)
+	}
+	if enc.Kind != encoders.QSV {
+		t.Errorf("expected qsv after nvenc failure, got %s", enc.Kind)
+	}
+	if !strings.Contains(out.String(), "Testing encoder: Nvidia NVENC...") {
+		t.Errorf("probe progress line missing label: %s", out.String())
+	}
+	if !strings.Contains(out.String(), "Testing encoder: Intel QuickSync...") {
+		t.Errorf("probe progress line missing label: %s", out.String())
+	}
+}
+
+// failFirstRunner fails every ffmpeg run whose args target the given encoder.
+type failFirstRunner struct {
+	failProbe string
+}
+
+func (f *failFirstRunner) Output(name string, args ...string) ([]byte, error) {
+	for _, a := range args {
+		if a == f.failProbe {
+			return nil, fmt.Errorf("probe fail")
+		}
+	}
+	return []byte{}, nil
+}
+
+func (f *failFirstRunner) Stream(name string, args ...string) ([]byte, error) {
+	return f.Output(name, args...)
+}
+
+func TestSourceVideoKbpsTiers(t *testing.T) {
+	// tier 1: video stream bitrate
+	v := probe.Stream{BitRate: "8000000"}
+	if got := sourceVideoKbps(v, &probe.Info{}, 0); got != 8000 {
+		t.Errorf("stream tier: got %d, want 8000", got)
+	}
+	// tier 2: container bitrate
+	v.BitRate = ""
+	info := &probe.Info{Format: probe.Format{BitRate: "4000000"}}
+	if got := sourceVideoKbps(v, info, 0); got != 4000 {
+		t.Errorf("container tier: got %d, want 4000", got)
+	}
+	// tier 3: size / integer-truncated duration
+	info.Format.BitRate = ""
+	info.Format.Duration = "600.7"
+	if got := sourceVideoKbps(v, info, 600_000_000); got != 8000 {
+		t.Errorf("size/duration tier: got %d, want 8000", got)
+	}
+	// nothing available
+	if got := sourceVideoKbps(v, &probe.Info{}, 0); got != 0 {
+		t.Errorf("no-data case: got %d, want 0", got)
 	}
 }

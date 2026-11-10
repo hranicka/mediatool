@@ -3,6 +3,7 @@ package encoders
 import (
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/hranicka/media-tool/internal/run"
@@ -219,14 +220,22 @@ func TestParseKindAndMode(t *testing.T) {
 }
 
 func TestPlanInfo(t *testing.T) {
-	if got := ModeMovie.PlanInfo(26, 0); got != "CQ 26 quality target" {
+	nvenc := Encoder{Kind: NVENC}
+	if got := nvenc.PlanInfo(ModeMovie, 26, 0); got != "CQ 26 quality target" {
 		t.Errorf("movie plan: %q", got)
 	}
-	if got := ModeCamera.PlanInfo(28, 2000); got != "CQ 28, capped at 1300k (source 2000k)" {
+	if got := nvenc.PlanInfo(ModeCamera, 28, 2000); got != "CQ 28, capped at 1300k (source 2000k)" {
 		t.Errorf("camera plan: %q", got)
 	}
-	if got := ModeCamera.PlanInfo(28, 0); got != "CQ 28 quality target (source bitrate unknown, no cap)" {
+	if got := nvenc.PlanInfo(ModeCamera, 28, 0); got != "CQ 28 quality target (source bitrate unknown, no cap)" {
 		t.Errorf("camera plan unknown bitrate: %q", got)
+	}
+	if got := nvenc.PlanInfo(ModeChromecast, 22, 0); got != "CQ 22, 15M cap, level 4.1" {
+		t.Errorf("chromecast plan: %q", got)
+	}
+	// the vaapi plan must not claim a bitrate ceiling CQP cannot enforce
+	if got := (Encoder{Kind: VAAPI}).PlanInfo(ModeChromecast, 22, 0); strings.Contains(got, "15M cap") {
+		t.Errorf("vaapi chromecast plan must not claim a ceiling: %q", got)
 	}
 }
 

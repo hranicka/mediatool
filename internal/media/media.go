@@ -64,7 +64,7 @@ func IsCoverArt(s probe.Stream) bool {
 }
 
 // HumanBytes formats a byte count in IEC units (1024 base), mirroring
-// numfmt --to=iec ("98K", "1.2G").
+// numfmt --to=iec ("98K", "1.5G").
 func HumanBytes(n int64) string {
 	const unit = 1024
 	if n < unit {
@@ -75,5 +75,6 @@ func HumanBytes(n int64) string {
 		div *= unit
 		exp++
 	}
-	return fmt.Sprintf("%.0f%c", float64(n)/float64(div), "KMGTPE"[exp])
+	s := fmt.Sprintf("%.1f", float64(n)/float64(div))
+	return strings.TrimSuffix(s, ".0") + string("KMGTPE"[exp])
 }
