@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.1
+
+- Dot ignore files are now honored along the whole target path: the search
+  walks from the target directory up to the filesystem root (like a flat
+  gitignore hierarchy), so an ignore file in `/foo` or `/foo/bar` also
+  governs `mediatool clean /foo/bar/baz`. Previously only the top of the
+  passed directory was read.
+
 ## 2.0.0
 
 Complete rework: the four per-tool binaries (hevcconverter, ac3converter,
