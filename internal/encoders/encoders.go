@@ -1,7 +1,9 @@
-// Package encoders probes working HEVC encoders and builds the per-mode
+// Package encoders probes working video encoders and builds the per-mode
 // ffmpeg video arguments. The probe order covers NVIDIA (nvenc), Intel
-// (qsv), Intel and AMD GPUs via VAAPI (Mesa) and software libx265; the
-// encoder is chosen at runtime on every machine.
+// (qsv), Intel and AMD GPUs via VAAPI (Mesa) and a software encoder; the
+// encoder is chosen at runtime on every machine. Each backend exists for
+// both output codecs (HEVC and AV1) under its ffmpeg name: hevc_nvenc vs
+// av1_nvenc, libx265 vs libsvtav1.
 package encoders
 
 import (
@@ -12,43 +14,101 @@ import (
 	"github.com/hranicka/mediatool/internal/run"
 )
 
-// Kind identifies an HEVC encoder backend.
+// Codec identifies the output video codec a conversion targets.
+type Codec string
+
+const (
+	CodecHEVC Codec = "hevc"
+	CodecAV1  Codec = "av1"
+)
+
+// ParseCodec validates a -c output codec value.
+func ParseCodec(s string) (Codec, error) {
+	switch Codec(s) {
+	case CodecHEVC, CodecAV1:
+		return Codec(s), nil
+	}
+	return "", fmt.Errorf("unknown output codec %q (want hevc or av1)", s)
+}
+
+// Kind identifies an encoder backend (hardware family or software).
 type Kind string
 
 const (
 	NVENC Kind = "nvenc"
 	QSV   Kind = "qsv"
 	VAAPI Kind = "vaapi"
-	X265  Kind = "x265"
+	SW    Kind = "sw"
 )
 
-// Candidates returns the default probe order.
-func Candidates() []Kind { return []Kind{NVENC, QSV, VAAPI, X265} }
+// Candidates returns the probe order for a target codec; both codecs
+// exist for every backend.
+func Candidates(c Codec) []Kind { return []Kind{NVENC, QSV, VAAPI, SW} }
 
-// ParseKind validates a -e encoder value.
+// ParseKind validates an -e encoder value; "x265" is a deprecated alias
+// for "sw".
 func ParseKind(s string) (Kind, error) {
 	switch Kind(s) {
-	case NVENC, QSV, VAAPI, X265:
+	case NVENC, QSV, VAAPI, SW:
 		return Kind(s), nil
+	case "x265":
+		return SW, nil
 	}
-	return "", fmt.Errorf("unknown encoder %q (want nvenc, qsv, vaapi or x265)", s)
+	return "", fmt.Errorf("unknown encoder %q (want nvenc, qsv, vaapi or sw)", s)
 }
 
-var labels = map[Kind]string{
+var kindLabels = map[Kind]string{
 	NVENC: "Nvidia NVENC",
 	QSV:   "Intel QuickSync",
 	VAAPI: "VAAPI (Intel/AMD)",
-	X265:  "software libx265",
 }
 
-// Label returns the human-readable encoder name.
-func (k Kind) Label() string { return labels[k] }
+// Label returns the human-readable name of a codec/backend pair; the
+// software backend names the actual encoder (libx265 vs libsvtav1).
+func Label(c Codec, k Kind) string {
+	if k == SW {
+		if c == CodecAV1 {
+			return "software libsvtav1"
+		}
+		return "software libx265"
+	}
+	return kindLabels[k]
+}
 
-// Encoder is a working HEVC encoder backend on this machine.
+// encoderName is the ffmpeg -c:v value for a codec/backend pair.
+func encoderName(c Codec, k Kind) string {
+	if c == CodecAV1 {
+		switch k {
+		case NVENC:
+			return "av1_nvenc"
+		case QSV:
+			return "av1_qsv"
+		case VAAPI:
+			return "av1_vaapi"
+		default:
+			return "libsvtav1"
+		}
+	}
+	switch k {
+	case NVENC:
+		return "hevc_nvenc"
+	case QSV:
+		return "hevc_qsv"
+	case VAAPI:
+		return "hevc_vaapi"
+	default:
+		return "libx265"
+	}
+}
+
+// Encoder is a working encoder backend on this machine.
 type Encoder struct {
+	Codec Codec
 	Kind  Kind
 	Label string
 }
+
+func (e Encoder) name() string { return encoderName(e.Codec, e.Kind) }
 
 // Mode selects the conversion quality strategy (ported from the bash
 // convert-video.sh): quality targets with optional source-bitrate caps.
@@ -141,13 +201,17 @@ func (e Encoder) qualityArgs(cq int) []string {
 	cqStr := fmt.Sprint(cq)
 	switch e.Kind {
 	case NVENC:
-		return []string{"-c:v", "hevc_nvenc", "-preset", "p5", "-tune", "hq", "-rc", "vbr", "-cq", cqStr, "-b:v", "0", "-spatial-aq", "1"}
+		// av1_nvenc shares the hevc_nvenc option set
+		return []string{"-c:v", e.name(), "-preset", "p5", "-tune", "hq", "-rc", "vbr", "-cq", cqStr, "-b:v", "0", "-spatial-aq", "1"}
 	case QSV:
-		return []string{"-c:v", "hevc_qsv", "-preset", "medium", "-global_quality", cqStr}
+		return []string{"-c:v", e.name(), "-preset", "medium", "-global_quality", cqStr}
 	case VAAPI:
 		// CQP works on both Intel and Mesa (AMD); ICQ would be Intel-only.
-		return []string{"-c:v", "hevc_vaapi", "-rc_mode", "CQP", "-qp", cqStr}
+		return []string{"-c:v", e.name(), "-rc_mode", "CQP", "-qp", cqStr}
 	default:
+		if e.Codec == CodecAV1 {
+			return []string{"-c:v", "libsvtav1", "-preset", "8", "-crf", cqStr}
+		}
 		return []string{"-c:v", "libx265", "-preset", "medium", "-crf", cqStr}
 	}
 }
@@ -164,16 +228,21 @@ func (e Encoder) cappedArgs(m Mode, cq, tgt, cap int) []string {
 		args := e.qualityArgs(cq)
 		return append(args, "-maxrate", capStr, "-bufsize", bufStr)
 	case QSV:
-		return []string{"-c:v", "hevc_qsv", "-preset", "medium", "-rc", "vbr", "-b:v", tgtStr, "-maxrate", capStr, "-bufsize", bufStr}
+		return []string{"-c:v", e.name(), "-preset", "medium", "-rc", "vbr", "-b:v", tgtStr, "-maxrate", capStr, "-bufsize", bufStr}
 	case VAAPI:
-		return []string{"-c:v", "hevc_vaapi", "-rc_mode", "VBR", "-b:v", tgtStr, "-maxrate", capStr, "-bufsize", bufStr}
+		return []string{"-c:v", e.name(), "-rc_mode", "VBR", "-b:v", tgtStr, "-maxrate", capStr, "-bufsize", bufStr}
 	default:
+		if e.Codec == CodecAV1 {
+			return []string{"-c:v", "libsvtav1", "-preset", "8", "-crf", fmt.Sprint(cq), "-maxrate", capStr, "-bufsize", bufStr}
+		}
 		return []string{"-c:v", "libx265", "-preset", "medium", "-crf", fmt.Sprint(cq), "-maxrate", capStr, "-bufsize", bufStr}
 	}
 }
 
 // chromecastArgs builds the Chromecast-safe encoder block; the level cap is
-// enforced on NVENC only (parity with the bash suite).
+// enforced on NVENC only (parity with the bash suite). Chromecast 4
+// devices decode HEVC only, so this block is HEVC-specific — convert
+// rejects the av1 codec in chromecast mode.
 func (e Encoder) chromecastArgs(cq int) []string {
 	cqStr := fmt.Sprint(cq)
 	switch e.Kind {
@@ -245,10 +314,11 @@ func (e Encoder) probeArgs(vaapiDevice string) []string {
 }
 
 // Probe returns the first working encoder among the candidates; every
-// candidate is verified with a real test encode.
-func Probe(r run.Runner, ffmpegBin, vaapiDevice string, candidates []Kind) (Encoder, error) {
+// candidate is verified with a real test encode for the given output
+// codec.
+func Probe(r run.Runner, ffmpegBin, vaapiDevice string, c Codec, candidates []Kind) (Encoder, error) {
 	for _, k := range candidates {
-		e := Encoder{Kind: k, Label: labels[k]}
+		e := Encoder{Codec: c, Kind: k, Label: Label(c, k)}
 		args := e.probeArgs(vaapiDevice)
 		slog.Debug("probing encoder", "kind", k, "cmd", ffmpegBin+" "+strings.Join(args, " "))
 		if _, err := r.Output(ffmpegBin, args...); err != nil {

@@ -85,7 +85,7 @@ func newTestTool(t *testing.T, dir string, ff run.Runner, cfg *Config, out *byte
 		r:          ff,
 		ffmpegBin:  "ffmpeg",
 		ffprobeBin: "ffprobe",
-		enc:        encoders.Encoder{Kind: encoders.NVENC, Label: "Nvidia NVENC"},
+		enc:        encoders.Encoder{Codec: encoders.CodecHEVC, Kind: encoders.NVENC, Label: "Nvidia NVENC"},
 		cfg:        cfg,
 		ignores:    mustIgnore(dir, "convert", cfg.Ignores),
 		out:        out,
@@ -624,7 +624,7 @@ func TestConvertVAAPIEncode(t *testing.T) {
 		return hdrJSON, true
 	}, encSize: 500_000}
 	tl := newTestTool(t, dir, ff, &Config{Dir: dir, Mode: encoders.ModeMovie, CQ: 26, VaapiDevice: "/dev/dri/renderD129"}, &bytes.Buffer{})
-	tl.enc = encoders.Encoder{Kind: encoders.VAAPI, Label: "VAAPI (Intel/AMD)"}
+	tl.enc = encoders.Encoder{Codec: encoders.CodecHEVC, Kind: encoders.VAAPI, Label: "VAAPI (Intel/AMD)"}
 	tl.processFile(src)
 
 	args := firstEncode(t, ff)
@@ -645,18 +645,54 @@ func TestConvertVAAPIEncode(t *testing.T) {
 func TestSelectEncoder(t *testing.T) {
 	out := &bytes.Buffer{}
 	failNVENC := &failFirstRunner{failProbe: "hevc_nvenc"}
-	enc, err := selectEncoder(failNVENC, out, "ffmpeg", "/dev/dri/renderD128", encoders.Candidates())
+	enc, err := selectEncoder(failNVENC, out, "ffmpeg", "/dev/dri/renderD128", encoders.CodecHEVC, encoders.Candidates(encoders.CodecHEVC))
 	if err != nil {
 		t.Fatalf("selectEncoder: %v", err)
 	}
-	if enc.Kind != encoders.QSV {
-		t.Errorf("expected qsv after nvenc failure, got %s", enc.Kind)
+	if enc.Kind != encoders.QSV || enc.Codec != encoders.CodecHEVC {
+		t.Errorf("expected hevc qsv after nvenc failure, got %s/%s", enc.Codec, enc.Kind)
 	}
 	if !strings.Contains(out.String(), "Testing encoder: Nvidia NVENC...") {
 		t.Errorf("probe progress line missing label: %s", out.String())
 	}
 	if !strings.Contains(out.String(), "Testing encoder: Intel QuickSync...") {
 		t.Errorf("probe progress line missing label: %s", out.String())
+	}
+}
+
+func TestConvertAV1Output(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "movie.mkv")
+	writeFile(t, src, 1_000_000)
+
+	ff := &fakeFF{probeFor: jsonFor(600.0), encSize: 500_000}
+	tl := newTestTool(t, dir, ff, &Config{Dir: dir, Mode: encoders.ModeMovie, Codec: encoders.CodecAV1, CQ: 26}, &bytes.Buffer{})
+	tl.enc = encoders.Encoder{Codec: encoders.CodecAV1, Kind: encoders.NVENC, Label: "Nvidia NVENC"}
+	tl.processFile(src)
+
+	if tl.converted != 1 {
+		t.Fatalf("av1 run must convert: %+v", tl)
+	}
+	args := firstEncode(t, ff)
+	if !hasPair(args, "-c:v", "av1_nvenc") {
+		t.Errorf("av1 output must use av1_nvenc: %v", args)
+	}
+	if hasArg(args, "hevc_nvenc") || hasArg(args, "libx265") {
+		t.Errorf("hevc encoder leaked into an av1 run: %v", args)
+	}
+}
+
+func TestCodecModeGuard(t *testing.T) {
+	if err := codecModeGuard(encoders.CodecAV1, encoders.ModeChromecast); err == nil {
+		t.Error("av1 + chromecast must be rejected")
+	}
+	for _, c := range []encoders.Codec{encoders.CodecHEVC, encoders.CodecAV1} {
+		if err := codecModeGuard(c, encoders.ModeMovie); err != nil {
+			t.Errorf("%s movie must pass: %v", c, err)
+		}
+	}
+	if err := codecModeGuard(encoders.CodecHEVC, encoders.ModeChromecast); err != nil {
+		t.Errorf("hevc chromecast must pass: %v", err)
 	}
 }
 

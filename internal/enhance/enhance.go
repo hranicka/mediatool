@@ -115,8 +115,8 @@ func Run(args []string) error {
 		if err := ensureEngine(enginePath, t.out); err != nil {
 			return err
 		}
-		fmt.Fprintf(t.out, "Testing encoder: %s...\n", encoders.Candidates()[0].Label())
-		enc, err := encoders.Probe(t.r, ffmpegBin, cfg.VaapiDevice, encoders.Candidates())
+		fmt.Fprintf(t.out, "Testing encoder: %s...\n", encoders.Label(encoders.CodecHEVC, encoders.Candidates(encoders.CodecHEVC)[0]))
+		enc, err := encoders.Probe(t.r, ffmpegBin, cfg.VaapiDevice, encoders.CodecHEVC, encoders.Candidates(encoders.CodecHEVC))
 		if err != nil {
 			return err
 		}

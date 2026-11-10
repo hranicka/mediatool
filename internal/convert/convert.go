@@ -39,6 +39,7 @@ var decodeErrRe = regexp.MustCompile(`(?i)invalid nal|error splitting|decoding e
 type Config struct {
 	Dir         string
 	Mode        encoders.Mode
+	Codec       encoders.Codec
 	Enc         string
 	CQ          int
 	ScaleHeight int
@@ -78,10 +79,11 @@ var attempts = []attempt{
 func Run(args []string) error {
 	fs := flag.NewFlagSet("convert", flag.ExitOnError)
 	var cfg Config
-	var mode, scaleArg string
+	var mode, scaleArg, codec string
 	var verbose bool
 	fs.StringVar(&mode, "p", "movie", "content mode: movie (default), camera, lowq, chromecast")
-	fs.StringVar(&cfg.Enc, "e", "auto", "encoder: auto (probe), nvenc, qsv, vaapi, x265")
+	fs.StringVar(&codec, "c", string(encoders.CodecHEVC), "output codec: hevc (default) or av1")
+	fs.StringVar(&cfg.Enc, "e", "auto", "encoder: auto (probe), nvenc, qsv, vaapi, sw")
 	fs.IntVar(&cfg.CQ, "q", 0, "CQ/CRF value (defaults: movie 26, camera 28, lowq 31, chromecast 22)")
 	fs.StringVar(&scaleArg, "r", "", "downscale to this height when the source is larger (e.g. 1080p); never upscales")
 	fs.StringVar(&cfg.VaapiDevice, "vaapi_device", "/dev/dri/renderD128", "VAAPI render device")
@@ -108,6 +110,12 @@ func Run(args []string) error {
 	if cfg.Mode, err = encoders.ParseMode(mode); err != nil {
 		return err
 	}
+	if cfg.Codec, err = encoders.ParseCodec(codec); err != nil {
+		return err
+	}
+	if err := codecModeGuard(cfg.Codec, cfg.Mode); err != nil {
+		return err
+	}
 	if cfg.CQ == 0 {
 		cfg.CQ = cfg.Mode.DefaultCQ()
 	}
@@ -122,8 +130,12 @@ func Run(args []string) error {
 
 	var candidates []encoders.Kind
 	if cfg.Enc == "auto" {
-		candidates = encoders.Candidates()
+		candidates = encoders.Candidates(cfg.Codec)
 	} else {
+		if cfg.Enc == "x265" {
+			fmt.Fprintln(os.Stdout, "warning: -e x265 is deprecated - use -e sw")
+			cfg.Enc = "sw"
+		}
 		k, err := encoders.ParseKind(cfg.Enc)
 		if err != nil {
 			return err
@@ -132,7 +144,7 @@ func Run(args []string) error {
 	}
 
 	r := run.Cmd{}
-	enc, err := selectEncoder(r, os.Stdout, ffmpegBin, cfg.VaapiDevice, candidates)
+	enc, err := selectEncoder(r, os.Stdout, ffmpegBin, cfg.VaapiDevice, cfg.Codec, candidates)
 	if err != nil {
 		return err
 	}
@@ -156,11 +168,11 @@ func Run(args []string) error {
 
 // selectEncoder probes candidates one by one, echoing the bash progress
 // lines.
-func selectEncoder(r run.Runner, w io.Writer, ffmpegBin, vaapiDevice string, candidates []encoders.Kind) (encoders.Encoder, error) {
+func selectEncoder(r run.Runner, w io.Writer, ffmpegBin, vaapiDevice string, codec encoders.Codec, candidates []encoders.Kind) (encoders.Encoder, error) {
 	for _, k := range candidates {
-		e := encoders.Encoder{Kind: k, Label: k.Label()}
+		e := encoders.Encoder{Codec: codec, Kind: k, Label: encoders.Label(codec, k)}
 		fmt.Fprintf(w, "Testing encoder: %s...\n", e.Label)
-		chosen, err := encoders.Probe(r, ffmpegBin, vaapiDevice, []encoders.Kind{k})
+		chosen, err := encoders.Probe(r, ffmpegBin, vaapiDevice, codec, []encoders.Kind{k})
 		if err == nil {
 			return chosen, nil
 		}
@@ -180,6 +192,16 @@ func parseScaleHeight(arg string) (int, error) {
 	return h / 2 * 2, nil
 }
 
+// codecModeGuard rejects codec/mode combinations the target device cannot
+// play: chromecast mode exists for Chromecast 4 devices, which decode
+// HEVC only.
+func codecModeGuard(c encoders.Codec, m encoders.Mode) error {
+	if m == encoders.ModeChromecast && c != encoders.CodecHEVC {
+		return fmt.Errorf("chromecast mode targets Chromecast 4 devices and outputs HEVC only")
+	}
+	return nil
+}
+
 func (t *tool) runAll() error {
 	cfg := t.cfg
 	cqNote := ""
@@ -188,6 +210,7 @@ func (t *tool) runAll() error {
 	}
 	fmt.Fprintf(t.out, "FFmpeg binary : %s\n", t.ffmpegBin)
 	fmt.Fprintf(t.out, "Using encoder : %s (quality value: %d)\n", t.enc.Label, cfg.CQ)
+	fmt.Fprintf(t.out, "Output codec  : %s\n", cfg.Codec)
 	fmt.Fprintf(t.out, "Mode          : %s%s\n", cfg.Mode, cqNote)
 	fmt.Fprintf(t.out, "Target        : %s\n", cfg.Dir)
 	fmt.Fprintf(t.out, "Ignore entries: %d\n", t.ignores.Len())

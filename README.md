@@ -31,7 +31,7 @@ Run `mediatool <command> -h` for the full flag list of each command.
 ### convert
 
 ```
-mediatool convert [-p movie|camera|lowq|chromecast] [-e auto|nvenc|qsv|vaapi|x265]
+mediatool convert [-p movie|camera|lowq|chromecast] [-c hevc|av1] [-e auto|nvenc|qsv|vaapi|sw]
                    [-q cq] [-r height] [-vaapi_device dev] [-i list] [-f] [-n] <dir>
 ```
 
@@ -39,6 +39,11 @@ mediatool convert [-p movie|camera|lowq|chromecast] [-e auto|nvenc|qsv|vaapi|x26
   of the source video bitrate. `lowq`: CQ 31, capped at ~50 %.
   `chromecast`: HEVC main@4.1 with a 15M ceiling, written as a new
   `*_CC4_FIXED.mkv` (originals untouched).
+- `-c av1` targets AV1 instead of HEVC (hardware `av1_nvenc`/`av1_qsv`/
+  `av1_vaapi` where available, `libsvtav1` software fallback); HEVC stays
+  the default output. Chromecast mode is HEVC-only (the target device
+  decodes HEVC). GPUs without AV1 hardware encode (e.g. the Intel N100)
+  fall back to slow software encoding.
 - HDR10/HLG color metadata is preserved (p010 for 10-bit); Dolby Vision
   sources are skipped (`-f` forces, losing the DV layer); HDR10+ dynamic
   metadata is dropped (static HDR10 stays).
