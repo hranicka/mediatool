@@ -748,15 +748,10 @@ func TestSourceVideoKbpsTiers(t *testing.T) {
 	if got := sourceVideoKbps(v, &probe.Info{}, 0); got != 8000 {
 		t.Errorf("stream tier: got %d, want 8000", got)
 	}
-	// tier 2: container bitrate
+	// tier 2: size / integer-truncated duration (the container bitrate is
+	// deliberately not consulted - it measures audio and subtitles too)
 	v.BitRate = ""
-	info := &probe.Info{Format: probe.Format{BitRate: "4000000"}}
-	if got := sourceVideoKbps(v, info, 0); got != 4000 {
-		t.Errorf("container tier: got %d, want 4000", got)
-	}
-	// tier 3: size / integer-truncated duration
-	info.Format.BitRate = ""
-	info.Format.Duration = "600.7"
+	info := &probe.Info{Format: probe.Format{Duration: "600.7"}}
 	if got := sourceVideoKbps(v, info, 600_000_000); got != 8000 {
 		t.Errorf("size/duration tier: got %d, want 8000", got)
 	}

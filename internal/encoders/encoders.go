@@ -144,20 +144,20 @@ func ParseMode(s string) (Mode, error) {
 	return "", fmt.Errorf("unknown mode %q (want movie, camera, lowq or chromecast)", s)
 }
 
-// cappedPlan mirrors the bash bitrate math: camera targets ~55 % capped at
-// 65 % of the source, lowq targets ~40 % capped at 50 %, with floors.
+// cappedPlan returns the bitrate plan for the capped modes: camera
+// targets ~55 % of the source bitrate capped at 65 %, lowq targets ~40 %
+// capped at 50 %. Sources whose cap would fall below a sane minimum get
+// no cap at all (pure quality targeting; the size gate bounds the
+// damage) — floor-clamping instead pushed the cap above the source
+// bitrate, where it constrained nothing.
 func cappedPlan(m Mode, srcKbps int) (tgt, cap int) {
-	tgtPct, capPct, tgtMin, capMin := 55, 65, 500, 800
+	tgtPct, capPct, minCap := 55, 65, 800
 	if m == ModeLowQ {
-		tgtPct, capPct, tgtMin, capMin = 40, 50, 400, 600
+		tgtPct, capPct, minCap = 40, 50, 600
 	}
-	tgt = srcKbps * tgtPct / 100
-	if tgt < tgtMin {
-		tgt = tgtMin
-	}
-	cap = srcKbps * capPct / 100
-	if cap < capMin {
-		cap = capMin
+	tgt, cap = srcKbps*tgtPct/100, srcKbps*capPct/100
+	if cap < minCap {
+		return 0, 0
 	}
 	return tgt, cap
 }
@@ -270,8 +270,7 @@ func (e Encoder) VideoArgs(m Mode, cq, srcVideoKbps int) []string {
 		}
 		return e.chromecastArgs(cq)
 	case ModeCamera, ModeLowQ:
-		if srcVideoKbps > 0 {
-			tgt, cap := cappedPlan(m, srcVideoKbps)
+		if tgt, cap := cappedPlan(m, srcVideoKbps); cap > 0 {
 			return e.cappedArgs(m, cq, tgt, cap)
 		}
 		return e.qualityArgs(cq)
@@ -293,11 +292,10 @@ func (e Encoder) PlanInfo(m Mode, cq, srcVideoKbps int) string {
 		}
 		return fmt.Sprintf("CQ %d, 15M cap, level 4.1", cq)
 	default:
-		if srcVideoKbps > 0 {
-			_, cap := cappedPlan(m, srcVideoKbps)
+		if _, cap := cappedPlan(m, srcVideoKbps); cap > 0 {
 			return fmt.Sprintf("CQ %d, capped at %dk (source %dk)", cq, cap, srcVideoKbps)
 		}
-		return fmt.Sprintf("CQ %d quality target (source bitrate unknown, no cap)", cq)
+		return fmt.Sprintf("CQ %d quality target (no cap)", cq)
 	}
 }
 

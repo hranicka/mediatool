@@ -507,13 +507,12 @@ func countDecodeErrors(log []byte) int {
 	return n
 }
 
-// sourceVideoKbps determines the source video bitrate: video stream first,
-// then the container, then size/duration (bash probe_src_bitrate_kbps).
+// sourceVideoKbps determines the source video bitrate: the video stream's
+// own bitrate first, then size/duration as a whole-file estimate (the
+// container bitrate is not consulted — it measures audio and subtitles
+// too).
 func sourceVideoKbps(v probe.Stream, info *probe.Info, srcSize int64) int {
 	if br := v.BitRateInt(); br > 0 {
-		return br / 1000
-	}
-	if br, err := strconv.Atoi(info.Format.BitRate); err == nil && br > 0 {
 		return br / 1000
 	}
 	if dur, ok := info.Duration(); ok && dur > 0 && srcSize > 0 {

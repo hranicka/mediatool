@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- `convert`: simpler bitrate caps — sources whose cap would fall below a
+  sane minimum (~800k camera / ~600k lowq) get no cap at all (pure
+  quality targeting, size gate as backstop) instead of floor-clamped caps
+  that could sit above the source bitrate, where they constrained
+  nothing. The container-bitrate probe tier is gone (it measured audio
+  and subtitles too; the size/duration estimate covers it).
 - `convert`: new `-c` output codec flag — `av1` targets AV1
   (av1_nvenc/av1_qsv/av1_vaapi, libsvtav1 software fallback) while HEVC
   stays the default; chromecast mode rejects AV1 (Chromecast 4 devices

@@ -86,10 +86,10 @@ func TestCappedArgs(t *testing.T) {
 		t.Errorf("vaapi camera: got %v, want %v", got, want)
 	}
 
-	// lowq with floors: source 1000 -> tgt 400 (at floor), cap 600 (floor)
+	// lowq: source 2000 -> tgt 800, cap 1000
 	x265 := Encoder{Codec: CodecHEVC, Kind: SW}
-	want = []string{"-c:v", "libx265", "-preset", "medium", "-crf", "31", "-maxrate", "600k", "-bufsize", "1200k"}
-	if got := x265.VideoArgs(ModeLowQ, 31, 1000); !reflect.DeepEqual(got, want) {
+	want = []string{"-c:v", "libx265", "-preset", "medium", "-crf", "31", "-maxrate", "1000k", "-bufsize", "2000k"}
+	if got := x265.VideoArgs(ModeLowQ, 31, 2000); !reflect.DeepEqual(got, want) {
 		t.Errorf("x265 lowq: got %v, want %v", got, want)
 	}
 
@@ -101,21 +101,27 @@ func TestCappedArgs(t *testing.T) {
 	}
 
 	av1SW := Encoder{Codec: CodecAV1, Kind: SW}
-	want = []string{"-c:v", "libsvtav1", "-preset", "8", "-crf", "31", "-maxrate", "600k", "-bufsize", "1200k"}
-	if got := av1SW.VideoArgs(ModeLowQ, 31, 1000); !reflect.DeepEqual(got, want) {
+	want = []string{"-c:v", "libsvtav1", "-preset", "8", "-crf", "31", "-maxrate", "1000k", "-bufsize", "2000k"}
+	if got := av1SW.VideoArgs(ModeLowQ, 31, 2000); !reflect.DeepEqual(got, want) {
 		t.Errorf("libsvtav1 lowq: got %v, want %v", got, want)
 	}
 }
 
-func TestCappedPlanFloors(t *testing.T) {
-	// tiny source bitrates must hit the floors
-	tgt, cap := cappedPlan(ModeCamera, 100)
-	if tgt != 500 || cap != 800 {
-		t.Errorf("camera floor: got tgt=%d cap=%d, want 500/800", tgt, cap)
+func TestCappedPlan(t *testing.T) {
+	// sources whose cap would fall below the sane minimum get no cap at
+	// all (pure quality targeting, size gate as backstop)
+	if tgt, cap := cappedPlan(ModeCamera, 100); tgt != 0 || cap != 0 {
+		t.Errorf("camera tiny source: got %d/%d, want 0/0", tgt, cap)
 	}
-	tgt, cap = cappedPlan(ModeLowQ, 100)
-	if tgt != 400 || cap != 600 {
-		t.Errorf("lowq floor: got tgt=%d cap=%d, want 400/600", tgt, cap)
+	if tgt, cap := cappedPlan(ModeLowQ, 1199); tgt != 0 || cap != 0 {
+		t.Errorf("lowq below threshold: got %d/%d, want 0/0", tgt, cap)
+	}
+	// above the threshold the percentages are exact
+	if tgt, cap := cappedPlan(ModeCamera, 2000); tgt != 1100 || cap != 1300 {
+		t.Errorf("camera: got %d/%d, want 1100/1300", tgt, cap)
+	}
+	if tgt, cap := cappedPlan(ModeLowQ, 2000); tgt != 800 || cap != 1000 {
+		t.Errorf("lowq: got %d/%d, want 800/1000", tgt, cap)
 	}
 }
 
@@ -294,8 +300,8 @@ func TestPlanInfo(t *testing.T) {
 	if got := nvenc.PlanInfo(ModeCamera, 28, 2000); got != "CQ 28, capped at 1300k (source 2000k)" {
 		t.Errorf("camera plan: %q", got)
 	}
-	if got := nvenc.PlanInfo(ModeCamera, 28, 0); got != "CQ 28 quality target (source bitrate unknown, no cap)" {
-		t.Errorf("camera plan unknown bitrate: %q", got)
+	if got := nvenc.PlanInfo(ModeCamera, 28, 0); got != "CQ 28 quality target (no cap)" {
+		t.Errorf("camera plan no cap: %q", got)
 	}
 	if got := nvenc.PlanInfo(ModeChromecast, 22, 0); got != "CQ 22, 15M cap, level 4.1" {
 		t.Errorf("chromecast plan: %q", got)
