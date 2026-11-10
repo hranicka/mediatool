@@ -1,44 +1,37 @@
-# MediaTool
+# MediaTool 2.0
 
-## ac3converter
+Single-binary media library toolkit for MKV/MP4 compaction and management on
+Linux. One `media-tool` binary serves NVIDIA (NVENC), Intel (QSV/VAAPI) and
+AMD (VAAPI via Mesa) machines alike — the encoder is probed at runtime, not
+chosen at build time.
 
-Application searches for MKV (Matroska) or MP4 files which contain audio streams
-in DTS, TrueHD or E-AC3 codecs. If such a file does not contain AC3 stream
-of the same language (except commentary tracks), file is being converted
-and AC3 track is appended in the file.
+> Work in progress: 2.0 rework of the retired per-tool generation
+> (hevcconverter/ac3converter/cleaner/dupfinder). Subcommands are being
+> ported from the proven bash suite; behavior parity is the spec.
 
-## hevcconverter
+## Commands
 
-Application searches for MKV (Matroska) or MP4 files which contain video streams
-in H.264 codec. If such a file does not contain HEVC stream, file is being
-converted and HEVC track replaces the original one.
+| Command | Purpose |
+|---|---|
+| `convert` | re-encode H.264 video tracks to HEVC (nvenc → qsv → vaapi → x265 probe chain) |
+| `clean` | remove audio/subtitle tracks of non-whitelisted languages (default: cs + en) |
+| `ac3` | append AC3 640k compatibility tracks for DTS/TrueHD/FLAC audio |
+| `dup` | report duplicate audio tracks (read-only) |
+| `enhance` | AI-upscale via Real-ESRGAN and re-encode to HEVC 1080p |
 
-## dupfinder
+All library-touching commands honor the dot ignore files in the target
+directory, keep `.old` backups and support a dry run.
 
-Application searches for duplicated audio tracks in MKV (Matroska) or MP4 files.
-
-## cleaner
-
-Application searches for MKV (Matroska) or MP4 files which contain streams
-without whitelisted language. Such streams are being removed from the file.
-
-### Requirements
-
-* ffmpeg
-* ffprobe (installed along with ffmpeg)
-* user is in the group `render` (to access `/dev/dri/renderD128` for hardware acceleration)
+## Build
 
 ```shell
-sudo apt-get update
-sudo apt-get install ffmpeg
+make build      # dist/media-tool
+make test       # vet + staticcheck + race tests
 ```
 
-### Usage
+## Requirements
 
-```
-make
-./dist/ac3converter -help
-./dist/hevcconverter -help
-./dist/dupfinder -help
-./dist/cleaner -help
-```
+* ffmpeg / ffprobe on PATH (or next to the binary / via `FFMPEG_BIN`)
+* for hardware encoders: access to the GPU device (NVIDIA driver, or the
+  `render` group for `/dev/dri/renderD128` on Intel/AMD)
+* jq is not needed — 2.0 parses ffprobe JSON natively

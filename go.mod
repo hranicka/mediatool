@@ -1,3 +1,3 @@
-module github.com/hranicka/mediatool
+module github.com/hranicka/media-tool
 
-go 1.22
+go 1.26

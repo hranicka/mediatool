@@ -1,25 +1,25 @@
-.PHONY: all download test build
+.PHONY: all install test build lint release-check
 
-all: install test build
+STATICCHECK := $(shell command -v staticcheck 2>/dev/null || echo "$(shell go env GOPATH)/bin/staticcheck")
+VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+
+all: test build
 
 install:
 	go install honnef.co/go/tools/cmd/staticcheck@latest
 	go mod download
 
-run:
-	go run .
-
 test:
-	go fmt ./...
-	go mod tidy -v
-	go mod verify
 	go vet ./...
-	staticcheck -checks=all ./...
-	go test ./...
+	$(STATICCHECK) ./...
+	go test -race ./...
 
 build:
 	mkdir -p ./dist
-	go build -o ./dist/ ./cmd/ac3converter
-	go build -o ./dist/ ./cmd/hevcconverter
-	go build -o ./dist/ ./cmd/dupfinder
-	go build -o ./dist/ ./cmd/cleaner
+	go build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o ./dist/media-tool ./cmd/media-tool
+
+lint:
+	go fmt ./...
+
+release-check:
+	goreleaser check
