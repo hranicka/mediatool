@@ -13,13 +13,16 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/hranicka/mediatool/internal/cli"
 	"github.com/hranicka/mediatool/internal/encoders"
 	"github.com/hranicka/mediatool/internal/ignore"
 	"github.com/hranicka/mediatool/internal/media"
 	"github.com/hranicka/mediatool/internal/run"
+	"github.com/hranicka/mediatool/internal/ui"
 	"github.com/hranicka/mediatool/internal/walk"
 )
 
@@ -38,6 +41,7 @@ type Config struct {
 	VaapiDevice string
 	Ignores     []string
 	DryRun      bool
+	Verbose     bool
 }
 
 type tool struct {
@@ -48,10 +52,29 @@ type tool struct {
 	cfg        *Config
 	enginePath string
 	ignores    ignore.List
-	out        io.Writer
+	rep        *ui.Reporter
 	guard      *run.TmpGuard
 
 	enhanced, skipped, failed int
+	failures                  []ui.Failure
+}
+
+// fail renders the standard "Error: ..." line and records the failure for
+// the summary.
+func (t *tool) fail(path, msg string) {
+	t.rep.Fail(msg, "")
+	t.failures = append(t.failures, ui.Failure{Path: path, Msg: msg})
+	t.failed++
+}
+
+// silentCapture captures a step's stderr without echoing it on
+// interactive runs (the plain Stream passthrough stays for redirected
+// output and -v).
+func (t *tool) silentCapture() func(elapsed time.Duration, speed string) {
+	if t.rep.Interactive() && !t.cfg.Verbose {
+		return func(time.Duration, string) {}
+	}
+	return nil
 }
 
 // Run executes the enhance subcommand.
@@ -71,6 +94,7 @@ func Run(args []string) error {
 	if verbose {
 		slog.SetLogLoggerLevel(slog.LevelDebug)
 	}
+	cfg.Verbose = verbose
 	if fs.NArg() != 1 {
 		fmt.Fprintln(os.Stderr, "usage: mediatool enhance [flags] <directory>")
 		return fmt.Errorf("enhance needs exactly one directory argument")
@@ -95,8 +119,9 @@ func Run(args []string) error {
 	}
 
 	ignores, warnings := ignore.Load(dir, "enhance", cfg.Ignores)
+	rep := ui.New(os.Stdout, ui.Detect(os.Stdout, os.Stderr))
 	for _, w := range warnings {
-		fmt.Fprintln(os.Stdout, "warning:", w)
+		rep.Raw(ui.WarnTone, "warning: %s\n", w)
 	}
 
 	t := &tool{
@@ -106,22 +131,22 @@ func Run(args []string) error {
 		cfg:        &cfg,
 		enginePath: enginePath,
 		ignores:    ignores,
-		out:        os.Stdout,
+		rep:        rep,
 		guard:      run.NewTmpGuard(),
 	}
 
 	// the engine and the encoder are only needed for real runs
 	if !cfg.DryRun {
-		if err := ensureEngine(enginePath, t.out); err != nil {
+		if err := ensureEngine(enginePath, rep); err != nil {
 			return err
 		}
-		fmt.Fprintf(t.out, "Testing encoder: %s...\n", encoders.Label(encoders.CodecHEVC, encoders.Candidates(encoders.CodecHEVC)[0]))
+		rep.Raw(ui.DimTone, "Testing encoder: %s...\n", encoders.Label(encoders.CodecHEVC, encoders.Candidates(encoders.CodecHEVC)[0]))
 		enc, err := encoders.Probe(t.r, ffmpegBin, cfg.VaapiDevice, encoders.CodecHEVC, encoders.Candidates(encoders.CodecHEVC))
 		if err != nil {
 			return err
 		}
 		t.enc = enc
-		fmt.Fprintf(t.out, "Using encoder : %s (quality value: %d)\n", enc.Label, cfg.CQ)
+		rep.Raw(ui.Neutral, "Using encoder : %s (quality value: %d)\n", enc.Label, cfg.CQ)
 	}
 	return t.runAll()
 }
@@ -139,7 +164,7 @@ func defaultEngineDir() string {
 }
 
 // ensureEngine downloads and unpacks the standalone engine on first use.
-func ensureEngine(enginePath string, w io.Writer) error {
+func ensureEngine(enginePath string, rep *ui.Reporter) error {
 	if _, err := os.Stat(enginePath); err == nil {
 		return nil
 	}
@@ -148,11 +173,11 @@ func ensureEngine(enginePath string, w io.Writer) error {
 		return fmt.Errorf("cannot create engine dir: %w", err)
 	}
 
-	fmt.Fprintln(w, "=========================================================")
-	fmt.Fprintln(w, "Downloading native Real-ESRGAN engine...")
-	fmt.Fprintln(w, "=========================================================")
+	rep.Raw(ui.DimTone, "=========================================================\n")
+	rep.Raw(ui.InfoTone, "Downloading native Real-ESRGAN engine...\n")
+	rep.Raw(ui.DimTone, "=========================================================\n")
 	zipPath := filepath.Join(dir, "engine.zip")
-	if err := download(engineURL, zipPath); err != nil {
+	if err := download(engineURL, zipPath, rep); err != nil {
 		return fmt.Errorf("cannot download engine: %w", err)
 	}
 	if err := unpackEngine(zipPath, enginePath); err != nil {
@@ -160,11 +185,11 @@ func ensureEngine(enginePath string, w io.Writer) error {
 		return fmt.Errorf("cannot unpack engine: %w", err)
 	}
 	os.Remove(zipPath)
-	fmt.Fprintln(w, "Download complete.")
+	rep.Raw(ui.GoodTone, "Download complete.\n")
 	return nil
 }
 
-func download(url, dest string) error {
+func download(url, dest string, rep *ui.Reporter) error {
 	resp, err := http.Get(url)
 	if err != nil {
 		return err
@@ -178,10 +203,34 @@ func download(url, dest string) error {
 		return err
 	}
 	defer f.Close()
-	if _, err := io.Copy(f, resp.Body); err != nil {
+	var body io.Reader = resp.Body
+	if resp.ContentLength > 0 {
+		body = &progressReader{r: resp.Body, total: resp.ContentLength, rep: rep}
+	}
+	if _, err := io.Copy(f, body); err != nil {
 		return err
 	}
 	return nil
+}
+
+// progressReader reports the download bytes to the reporter, throttled to
+// whole percent steps.
+type progressReader struct {
+	r     io.Reader
+	total int64
+	done  int64
+	rep   *ui.Reporter
+	last  int
+}
+
+func (p *progressReader) Read(b []byte) (int, error) {
+	n, err := p.r.Read(b)
+	p.done += int64(n)
+	if pct := int(p.done * 100 / p.total); pct != p.last {
+		p.last = pct
+		p.rep.DownloadProgress("Real-ESRGAN engine", p.done, p.total)
+	}
+	return n, err
 }
 
 // unpackEngine extracts the binary and the models/ directory, guarding
@@ -240,45 +289,56 @@ func extractZipEntry(f *zip.File, dest string) error {
 }
 
 func (t *tool) runAll() error {
-	fmt.Fprintf(t.out, "FFmpeg binary : %s\n", t.ffmpegBin)
-	fmt.Fprintf(t.out, "Engine        : %s\n", t.enginePath)
-	fmt.Fprintf(t.out, "Target        : %s\n", t.cfg.Dir)
-	fmt.Fprintf(t.out, "Ignore entries: %d\n", t.ignores.Len())
-	if t.cfg.DryRun {
-		fmt.Fprintf(t.out, "Extra         : DRY RUN\n")
+	kvs := []ui.KV{
+		ui.Pair("FFmpeg binary", t.ffmpegBin),
+		ui.Pair("Engine", t.enginePath),
+		ui.Pair("Target", t.cfg.Dir),
+		ui.Pair("Ignore entries", strconv.Itoa(t.ignores.Len())),
 	}
-	fmt.Fprintln(t.out, "==========================================")
+	if t.cfg.DryRun {
+		kvs = append(kvs, ui.Pair("Extra", "DRY RUN"))
+	}
+	t.rep.Header(kvs)
 
+	start := time.Now()
 	files, err := walk.Media(t.cfg.Dir)
 	if err != nil {
 		return err
 	}
-	for _, path := range files {
+	media := 0
+	for i, path := range files {
 		base := filepath.Base(path)
 		if strings.HasSuffix(base, outputSuffix) {
 			continue // output of a previous run
 		}
+		media++
 		if t.ignores.Match(path) {
-			fmt.Fprintf(t.out, "Skipping (ignored): %s\n", path)
+			t.rep.Skip(i+1, len(files), path, "ignored")
 			continue
 		}
-		t.processFile(path)
+		t.processFile(i+1, len(files), path)
 	}
+	t.rep.Found(media)
 
-	fmt.Fprintln(t.out, "==========================================")
-	fmt.Fprintf(t.out, "Batch processing complete! Enhanced: %d, skipped: %d, failed: %d.\n", t.enhanced, t.skipped, t.failed)
+	t.rep.Summary("Batch processing complete!", "Enhanced", "skipped", ui.Outcome{
+		Done:     t.enhanced,
+		Skipped:  t.skipped,
+		Failed:   t.failed,
+		Failures: t.failures,
+		Elapsed:  time.Since(start),
+	})
 	if t.failed > 0 {
 		return fmt.Errorf("%d file(s) failed", t.failed)
 	}
 	return nil
 }
 
-func (t *tool) skip(reason string, path string) {
-	fmt.Fprintf(t.out, "Skipping (%s): %s\n", reason, path)
+func (t *tool) skip(i, n int, path, reason string) {
+	t.rep.Skip(i, n, path, reason)
 	t.skipped++
 }
 
-func (t *tool) processFile(path string) {
+func (t *tool) processFile(i, n int, path string) {
 	base := filepath.Base(path)
 	if strings.HasSuffix(base, outputSuffix) {
 		return // output of a previous run
@@ -287,7 +347,7 @@ func (t *tool) processFile(path string) {
 	outPath := filepath.Join(filepath.Dir(path), stem+outputSuffix)
 
 	if _, err := os.Stat(outPath); err == nil {
-		t.skip("output already exists", outPath)
+		t.skip(i, n, outPath, "output already exists")
 		return
 	}
 
@@ -296,21 +356,20 @@ func (t *tool) processFile(path string) {
 		srcSize = st.Size()
 	}
 	if t.cfg.DryRun {
-		fmt.Fprintf(t.out, "Would enhance: %s (%s)\n", path, media.HumanBytes(srcSize))
+		t.rep.Would("Would enhance", i, n, path, media.HumanBytes(srcSize))
 		t.enhanced++
 		return
 	}
 
-	fmt.Fprintln(t.out, "=========================================================")
-	fmt.Fprintf(t.out, "Starting native HW accelerated process for: %s\n", base)
-	fmt.Fprintln(t.out, "=========================================================")
+	t.rep.Raw(ui.DimTone, "=========================================================\n")
+	t.rep.Start("Starting native HW accelerated process for", i, n, base, "", 0)
+	t.rep.Raw(ui.DimTone, "=========================================================\n")
 
 	dir := filepath.Dir(path)
 	frameIn := filepath.Join(dir, "frames_in_"+stem)
 	frameOut := filepath.Join(dir, "frames_out_"+stem)
 	if err := os.MkdirAll(frameIn, 0o755); err != nil {
-		fmt.Fprintf(t.out, "Error: %v\n", err)
-		t.failed++
+		t.fail(path, err.Error())
 		return
 	}
 	t.guard.Add(frameIn, frameOut)
@@ -324,33 +383,31 @@ func (t *tool) processFile(path string) {
 	}()
 
 	// 1. hardware decoding into lossless frames
-	fmt.Fprintln(t.out, "[1/3] Extracting frames using hardware decoding...")
-	if _, err := t.r.Stream(t.ffmpegBin, "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+	t.rep.Raw(ui.InfoTone, "[1/3] Extracting frames using hardware decoding...\n")
+	if _, err := run.StreamProgress(t.r, t.ffmpegBin, t.silentCapture(),
+		"-hide_banner", "-loglevel", "error", "-nostdin", "-y",
 		"-hwaccel", "auto", "-i", path,
 		"-qscale:v", "1", "-qmin", "1", "-qmax", "1", filepath.Join(frameIn, "frame_%08d.png")); err != nil {
-		fmt.Fprintf(t.out, "Error: frame extraction failed. Skipping.\n")
-		t.failed++
+		t.fail(path, "frame extraction failed. Skipping.")
 		return
 	}
 
 	// 2. AI enhancement on the native GPU
-	fmt.Fprintln(t.out, "[2/3] Running AI enhancement natively...")
-	_, _ = t.r.Stream(t.enginePath,
+	t.rep.Raw(ui.InfoTone, "[2/3] Running AI enhancement natively...\n")
+	_, _ = run.StreamProgress(t.r, t.enginePath, t.silentCapture(),
 		"-i", frameIn, "-o", frameOut,
 		"-n", "realesr-animevideov3", "-s", "2", "-t", "256",
 		"-m", filepath.Join(filepath.Dir(t.enginePath), "models"))
 	if emptyDir(frameOut) {
-		fmt.Fprintf(t.out, "Error: AI enhancement failed. Skipping.\n")
-		t.failed++
+		t.fail(path, "AI enhancement failed. Skipping.")
 		return
 	}
 
 	// 3. stitching frames and encoding to HEVC; -2 keeps the aspect ratio
-	fmt.Fprintln(t.out, "[3/3] Stitching frames and encoding to HEVC...")
+	t.rep.Raw(ui.InfoTone, "[3/3] Stitching frames and encoding to HEVC...\n")
 	framerate := t.probeFramerate(path)
 	if framerate == "" {
-		fmt.Fprintf(t.out, "Error: cannot determine frame rate. Skipping.\n")
-		t.failed++
+		t.fail(path, "cannot determine frame rate. Skipping.")
 		return
 	}
 	encodeArgs := []string{"-hide_banner", "-loglevel", "error", "-stats", "-nostdin", "-y"}
@@ -361,19 +418,22 @@ func (t *tool) processFile(path string) {
 		"-vf", mergeFilters(t.enc))
 	encodeArgs = append(encodeArgs, t.enc.VideoArgs(encoders.ModeMovie, t.cfg.CQ, 0)...)
 	encodeArgs = append(encodeArgs, "-c:a", "copy", "-c:s", "copy", outPath)
-	if _, err := t.r.Stream(t.ffmpegBin, encodeArgs...); err != nil {
-		fmt.Fprintf(t.out, "Error: encoding failed. Skipping.\n")
-		t.failed++
+	var onStats func(elapsed time.Duration, speed string)
+	if t.rep.Interactive() && !t.cfg.Verbose {
+		onStats = t.rep.Progress
+	}
+	if _, err := run.StreamProgress(t.r, t.ffmpegBin, onStats, encodeArgs...); err != nil {
+		t.fail(path, "encoding failed. Skipping.")
 		return
 	}
 
 	// 4. cleanup
-	fmt.Fprintln(t.out, "Cleaning up temporary frame directories...")
+	t.rep.Raw(ui.DimTone, "Cleaning up temporary frame directories...\n")
 	os.RemoveAll(frameIn)
 	os.RemoveAll(frameOut)
 	finished = true
 
-	fmt.Fprintf(t.out, "Finished processing: %s\n", outPath)
+	t.rep.Raw(ui.GoodTone, "Finished processing: %s\n", outPath)
 	t.enhanced++
 }
 

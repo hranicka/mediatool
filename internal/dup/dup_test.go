@@ -10,6 +10,7 @@ import (
 
 	"github.com/hranicka/mediatool/internal/ignore"
 	"github.com/hranicka/mediatool/internal/run"
+	"github.com/hranicka/mediatool/internal/ui"
 )
 
 type fakeFF struct {
@@ -69,7 +70,7 @@ func TestDupReport(t *testing.T) {
 		r: ff, ffprobeBin: "ffprobe",
 		cfg:     &Config{Dir: dir},
 		ignores: mustIgnore(dir, "dup", nil),
-		out:     out,
+		rep:     ui.New(out, ui.Profile{}),
 	}
 	if err := tl.runAll(); err != nil {
 		t.Fatalf("runAll: %v", err)
@@ -96,7 +97,7 @@ func TestDupNoReport(t *testing.T) {
 		r: ff, ffprobeBin: "ffprobe",
 		cfg:     &Config{Dir: dir},
 		ignores: mustIgnore(dir, "dup", nil),
-		out:     out,
+		rep:     ui.New(out, ui.Profile{}),
 	}
 	if err := tl.runAll(); err != nil {
 		t.Fatalf("runAll: %v", err)

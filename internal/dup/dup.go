@@ -7,17 +7,18 @@ package dup
 import (
 	"flag"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/hranicka/mediatool/internal/cli"
 	"github.com/hranicka/mediatool/internal/ignore"
 	"github.com/hranicka/mediatool/internal/probe"
 	"github.com/hranicka/mediatool/internal/run"
+	"github.com/hranicka/mediatool/internal/ui"
 	"github.com/hranicka/mediatool/internal/walk"
 )
 
@@ -32,7 +33,7 @@ type tool struct {
 	ffprobeBin string
 	cfg        *Config
 	ignores    ignore.List
-	out        io.Writer
+	rep        *ui.Reporter
 
 	filesWithDups int
 }
@@ -66,8 +67,9 @@ func Run(args []string) error {
 	}
 
 	ignores, warnings := ignore.Load(dir, "dup", cfg.Ignores)
+	rep := ui.New(os.Stdout, ui.Detect(os.Stdout, os.Stderr))
 	for _, w := range warnings {
-		fmt.Fprintln(os.Stdout, "warning:", w)
+		rep.Raw(ui.WarnTone, "warning: %s\n", w)
 	}
 
 	t := &tool{
@@ -75,7 +77,7 @@ func Run(args []string) error {
 		ffprobeBin: ffprobeBin,
 		cfg:        &cfg,
 		ignores:    ignores,
-		out:        os.Stdout,
+		rep:        rep,
 	}
 	return t.runAll()
 }
@@ -89,25 +91,30 @@ type trackKey struct {
 }
 
 func (t *tool) runAll() error {
-	fmt.Fprintf(t.out, "FFmpeg binary : %s\n", ffmpegLabel())
-	fmt.Fprintf(t.out, "Target        : %s\n", t.cfg.Dir)
-	fmt.Fprintf(t.out, "Ignore entries: %d\n", t.ignores.Len())
-	fmt.Fprintln(t.out, "==========================================")
+	t.rep.Header([]ui.KV{
+		ui.Pair("FFmpeg binary", ffmpegLabel()),
+		ui.Pair("Target", t.cfg.Dir),
+		ui.Pair("Ignore entries", strconv.Itoa(t.ignores.Len())),
+	})
 
+	start := time.Now()
 	files, err := walk.Media(t.cfg.Dir)
 	if err != nil {
 		return err
 	}
-	for _, path := range files {
+	t.rep.Found(len(files))
+	for i, path := range files {
 		if t.ignores.Match(path) {
-			fmt.Fprintf(t.out, "Skipping (ignored): %s\n", path)
+			t.rep.Skip(i+1, len(files), path, "ignored")
 			continue
 		}
-		t.checkFile(path)
+		t.checkFile(i+1, len(files), path)
 	}
 
-	fmt.Fprintln(t.out, "==========================================")
-	fmt.Fprintf(t.out, "Done. Files with duplicated audio tracks: %d.\n", t.filesWithDups)
+	t.rep.Summary("Done.", "Files with duplicated audio tracks", "", ui.Outcome{
+		Done:    t.filesWithDups,
+		Elapsed: time.Since(start),
+	})
 	return nil
 }
 
@@ -119,10 +126,10 @@ func ffmpegLabel() string {
 	return bin
 }
 
-func (t *tool) checkFile(path string) {
+func (t *tool) checkFile(i, n int, path string) {
 	info, err := probe.Probe(t.r, t.ffprobeBin, path)
 	if err != nil {
-		fmt.Fprintf(t.out, "Skipping (cannot probe: %v): %s\n", err, path)
+		t.rep.Skip(i, n, path, fmt.Sprintf("cannot probe: %v", err))
 		return
 	}
 
@@ -154,7 +161,7 @@ func (t *tool) checkFile(path string) {
 		for _, o := range dups[k] {
 			ords = append(ords, strconv.Itoa(o))
 		}
-		fmt.Fprintf(t.out, "Duplicate audio tracks in %s: #%d #%s (codec/bitrate/channels/language: %s|%s|%s|%s)\n",
+		t.rep.Raw(ui.WarnTone, "Duplicate audio tracks in %s: #%d #%s (codec/bitrate/channels/language: %s|%s|%s|%s)\n",
 			path, first[k], strings.Join(ords, " #"), k.codec, k.bitRate, k.channels, k.lang)
 	}
 	if len(dupKeys) > 0 {

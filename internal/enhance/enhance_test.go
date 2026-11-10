@@ -10,6 +10,7 @@ import (
 	"github.com/hranicka/mediatool/internal/encoders"
 	"github.com/hranicka/mediatool/internal/ignore"
 	"github.com/hranicka/mediatool/internal/run"
+	"github.com/hranicka/mediatool/internal/ui"
 )
 
 // fakeFF fakes ffmpeg (extraction no-op, encode writes the output),
@@ -77,7 +78,7 @@ func newTestTool(t *testing.T, dir string, ff run.Runner, engine string, cfg *Co
 		cfg:        cfg,
 		enginePath: engine,
 		ignores:    mustIgnore(dir, "enhance", cfg.Ignores),
-		out:        out,
+		rep:        ui.New(out, ui.Profile{}),
 		guard:      &run.TmpGuard{},
 	}
 }
@@ -112,7 +113,7 @@ func TestEnhanceHappyPath(t *testing.T) {
 
 	out := &bytes.Buffer{}
 	tl := newTestTool(t, dir, ff, ff.enginePath, &Config{Dir: dir, CQ: 22}, out)
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 
 	outPath := filepath.Join(dir, "anime_enhanced_1080p_hevc.mkv")
 	if tl.enhanced != 1 || tl.failed != 0 {
@@ -168,7 +169,7 @@ func TestEnhanceSkipExistingOutput(t *testing.T) {
 
 	out := &bytes.Buffer{}
 	tl := newTestTool(t, dir, ff, ff.enginePath, &Config{Dir: dir}, out)
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 
 	if tl.skipped != 1 || len(ff.encodeLog) != 0 {
 		t.Errorf("existing output must skip: %+v out=%s", tl, out.String())
@@ -181,7 +182,7 @@ func TestEnhanceSkipsOwnOutputs(t *testing.T) {
 	writeFile(t, prev, 1000)
 
 	tl := newTestTool(t, dir, ff, ff.enginePath, &Config{Dir: dir}, &bytes.Buffer{})
-	tl.processFile(prev)
+	tl.processFile(1, 1, prev)
 
 	if tl.enhanced != 0 || tl.skipped != 0 || tl.failed != 0 {
 		t.Errorf("own outputs must not be processed at all: %+v", tl)
@@ -197,7 +198,7 @@ func TestEnhanceDryRun(t *testing.T) {
 	out := &bytes.Buffer{}
 	tl := newTestTool(t, dir, &fakeFF{ffmpegBin: "ffmpeg", enginePath: filepath.Join(dir, "missing-engine")},
 		filepath.Join(dir, "missing-engine"), &Config{Dir: dir, DryRun: true}, out)
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 
 	if tl.enhanced != 1 || !strings.Contains(out.String(), "Would enhance") {
 		t.Errorf("dry run must list without engine: %+v out=%s", tl, out.String())
@@ -224,7 +225,7 @@ func TestEnhanceEngineFailure(t *testing.T) {
 
 	out := &bytes.Buffer{}
 	tl := newTestTool(t, dir, ff, ff.enginePath, &Config{Dir: dir}, out)
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 
 	if tl.failed != 1 || !strings.Contains(out.String(), "AI enhancement failed") {
 		t.Errorf("engine failure must be reported: %+v out=%s", tl, out.String())
@@ -277,7 +278,7 @@ func TestEnhanceVAAPIEncode(t *testing.T) {
 	out := &bytes.Buffer{}
 	tl := newTestTool(t, dir, ff, ff.enginePath, &Config{Dir: dir, VaapiDevice: "/dev/dri/renderD129"}, out)
 	tl.enc = encoders.Encoder{Kind: encoders.VAAPI, Label: "VAAPI (Intel/AMD)"}
-	tl.processFile(src)
+	tl.processFile(1, 1, src)
 
 	if tl.enhanced != 1 {
 		t.Fatalf("enhanced: %+v out=%s", tl, out.String())
@@ -301,7 +302,7 @@ func TestEnsureEngineSkipsExisting(t *testing.T) {
 	if err := os.WriteFile(engine, []byte("x"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := ensureEngine(engine, &bytes.Buffer{}); err != nil {
+	if err := ensureEngine(engine, ui.New(&bytes.Buffer{}, ui.Profile{})); err != nil {
 		t.Errorf("existing engine must be accepted: %v", err)
 	}
 }

@@ -198,21 +198,26 @@ func (r *Reporter) Would(verb string, i, n int, path, summary string, details ..
 
 // Start announces a file being processed and prints its detail lines
 // (plan, HDR notes). total is the source duration driving the progress
-// bar; 0 when unknown.
+// bar; 0 when unknown. size may be empty for commands without one.
 func (r *Reporter) Start(verb string, i, n int, path, size string, total time.Duration, details ...string) {
 	r.close()
 	r.total = total
 	if !r.p.Interactive {
-		fmt.Fprintf(r.out, "%s: %s (%s)\n", verb, path, size)
+		if size != "" {
+			fmt.Fprintf(r.out, "%s: %s (%s)\n", verb, path, size)
+		} else {
+			fmt.Fprintf(r.out, "%s: %s\n", verb, path)
+		}
 		for _, d := range details {
 			fmt.Fprintf(r.out, "  %s\n", d)
 		}
 		return
 	}
-	fmt.Fprintf(r.out, "%s %s %s\n",
-		r.pal.Info(r.sym.Run+" "+idx(i, n)),
-		r.pal.Bold(path),
-		r.pal.Dim("("+size+")"))
+	line := r.pal.Info(r.sym.Run+" "+idx(i, n)) + " " + r.pal.Bold(path)
+	if size != "" {
+		line += " " + r.pal.Dim("("+size+")")
+	}
+	fmt.Fprintln(r.out, line)
 	for _, d := range details {
 		fmt.Fprintln(r.out, r.pal.Dim("  "+d))
 	}
@@ -248,6 +253,20 @@ func (r *Reporter) Progress(elapsed time.Duration, speed string) {
 	line := "  " + clock(elapsed) + " elapsed"
 	if speed != "" {
 		line += "  " + speed
+	}
+	r.status(truncate(line, r.p.Width, r.p.UTF8))
+}
+
+// DownloadProgress redraws the live line for a running byte download
+// (total 0 = unknown); a no-op outside interactive mode.
+func (r *Reporter) DownloadProgress(label string, done, total int64) {
+	if !r.p.Interactive {
+		return
+	}
+	line := "  " + r.sym.Download + " " + label + "  " + media.HumanBytes(done)
+	if total > 0 {
+		frac := float64(done) / float64(total)
+		line = fmt.Sprintf("  %s %s  %s  %s/%s  %d%%", r.sym.Download, label, r.bar(frac, barBlocks), media.HumanBytes(done), media.HumanBytes(total), min(int(frac*100+0.5), 100))
 	}
 	r.status(truncate(line, r.p.Width, r.p.UTF8))
 }
