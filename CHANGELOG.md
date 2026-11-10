@@ -4,7 +4,7 @@
 
 Complete rework: the four per-tool binaries (hevcconverter, ac3converter,
 cleaner, dupfinder) and the interim bash suite collapse into a single
-`media-tool` binary with subcommands.
+`mediatool` binary with subcommands.
 
 - `convert` — HEVC conversion with the runtime encoder probe
   (nvenc → qsv → vaapi → x265), movie/camera/lowq/chromecast modes, HDR

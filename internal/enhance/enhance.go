@@ -15,12 +15,12 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/hranicka/media-tool/internal/cli"
-	"github.com/hranicka/media-tool/internal/encoders"
-	"github.com/hranicka/media-tool/internal/ignore"
-	"github.com/hranicka/media-tool/internal/media"
-	"github.com/hranicka/media-tool/internal/run"
-	"github.com/hranicka/media-tool/internal/walk"
+	"github.com/hranicka/mediatool/internal/cli"
+	"github.com/hranicka/mediatool/internal/encoders"
+	"github.com/hranicka/mediatool/internal/ignore"
+	"github.com/hranicka/mediatool/internal/media"
+	"github.com/hranicka/mediatool/internal/run"
+	"github.com/hranicka/mediatool/internal/walk"
 )
 
 const engineURL = "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesrgan-ncnn-vulkan-20220424-ubuntu.zip"
@@ -72,7 +72,7 @@ func Run(args []string) error {
 		slog.SetLogLoggerLevel(slog.LevelDebug)
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(os.Stderr, "usage: media-tool enhance [flags] <directory>")
+		fmt.Fprintln(os.Stderr, "usage: mediatool enhance [flags] <directory>")
 		return fmt.Errorf("enhance needs exactly one directory argument")
 	}
 	dir, err := cli.ResolveMediaTarget(fs.Arg(0), false)
@@ -124,13 +124,13 @@ func Run(args []string) error {
 // defaultEngineDir follows XDG data home conventions.
 func defaultEngineDir() string {
 	if x := os.Getenv("XDG_DATA_HOME"); x != "" {
-		return filepath.Join(x, "media-tool")
+		return filepath.Join(x, "mediatool")
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return engineBinary
 	}
-	return filepath.Join(home, ".local", "share", "media-tool")
+	return filepath.Join(home, ".local", "share", "mediatool")
 }
 
 // ensureEngine downloads and unpacks the standalone engine on first use.

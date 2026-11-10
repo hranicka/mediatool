@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/hranicka/media-tool/internal/probe"
+	"github.com/hranicka/mediatool/internal/probe"
 )
 
 func TestExpandWhitelist(t *testing.T) {

@@ -20,15 +20,15 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/hranicka/media-tool/internal/backup"
-	"github.com/hranicka/media-tool/internal/cli"
-	"github.com/hranicka/media-tool/internal/encoders"
-	"github.com/hranicka/media-tool/internal/gates"
-	"github.com/hranicka/media-tool/internal/ignore"
-	"github.com/hranicka/media-tool/internal/media"
-	"github.com/hranicka/media-tool/internal/probe"
-	"github.com/hranicka/media-tool/internal/run"
-	"github.com/hranicka/media-tool/internal/walk"
+	"github.com/hranicka/mediatool/internal/backup"
+	"github.com/hranicka/mediatool/internal/cli"
+	"github.com/hranicka/mediatool/internal/encoders"
+	"github.com/hranicka/mediatool/internal/gates"
+	"github.com/hranicka/mediatool/internal/ignore"
+	"github.com/hranicka/mediatool/internal/media"
+	"github.com/hranicka/mediatool/internal/probe"
+	"github.com/hranicka/mediatool/internal/run"
+	"github.com/hranicka/mediatool/internal/walk"
 )
 
 // decodeErrRe counts decode-error lines in the ffmpeg log; a damaged
@@ -96,7 +96,7 @@ func Run(args []string) error {
 		slog.SetLogLoggerLevel(slog.LevelDebug)
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(os.Stderr, "usage: media-tool convert [flags] <directory>")
+		fmt.Fprintln(os.Stderr, "usage: mediatool convert [flags] <directory>")
 		return fmt.Errorf("convert needs exactly one directory argument")
 	}
 	dir, err := cli.ResolveMediaTarget(fs.Arg(0), false)

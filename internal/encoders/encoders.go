@@ -9,7 +9,7 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/hranicka/media-tool/internal/run"
+	"github.com/hranicka/mediatool/internal/run"
 )
 
 // Kind identifies an HEVC encoder backend.

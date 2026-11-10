@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/hranicka/media-tool/internal/run"
+	"github.com/hranicka/mediatool/internal/run"
 )
 
 // Stream types used throughout the tool suite.

@@ -1,7 +1,7 @@
 # MediaTool 2.0
 
 Single-binary media library toolkit for MKV/MP4 compaction and management on
-Linux. One `media-tool` binary serves NVIDIA (NVENC), Intel (QSV/VAAPI) and
+Linux. One `mediatool` binary serves NVIDIA (NVENC), Intel (QSV/VAAPI) and
 AMD (VAAPI via Mesa) machines alike — the encoder is probed at runtime, not
 chosen at build time. 2.0 replaces the retired per-tool generation
 (hevcconverter/ac3converter/cleaner/dupfinder) and the interim bash suite.
@@ -12,7 +12,7 @@ Grab a binary from [GitHub Releases](../../releases) (linux/amd64, static,
 no runtime dependencies beyond ffmpeg/ffprobe), or build from source:
 
 ```shell
-make build      # dist/media-tool
+make build      # dist/mediatool
 ```
 
 ## Commands
@@ -26,12 +26,12 @@ make build      # dist/media-tool
 | `enhance` | AI-upscale with Real-ESRGAN and re-encode to HEVC 1080p |
 | `version` | print the version |
 
-Run `media-tool <command> -h` for the full flag list of each command.
+Run `mediatool <command> -h` for the full flag list of each command.
 
 ### convert
 
 ```
-media-tool convert [-p movie|camera|lowq|chromecast] [-e auto|nvenc|qsv|vaapi|x265]
+mediatool convert [-p movie|camera|lowq|chromecast] [-e auto|nvenc|qsv|vaapi|x265]
                    [-q cq] [-r height] [-vaapi_device dev] [-i list] [-f] [-n] <dir>
 ```
 
@@ -52,7 +52,7 @@ media-tool convert [-p movie|camera|lowq|chromecast] [-e auto|nvenc|qsv|vaapi|x2
 ### clean
 
 ```
-media-tool clean [-l cs,en] [-e] [-i list] [-n] <dir|file>
+mediatool clean [-l cs,en] [-e] [-i list] [-n] <dir|file>
 ```
 
 Removes audio and subtitle tracks whose language tag is outside the
@@ -66,7 +66,7 @@ cleaning them is mostly a no-op except cover-art removal.
 ### ac3
 
 ```
-media-tool ac3 [-b 448000] [-l lang] [-i list] [-n] <dir|file>
+mediatool ac3 [-b 448000] [-l lang] [-i list] [-n] <dir|file>
 ```
 
 For audio in DTS/TrueHD/FLAC without an AC3 track of the same language,
@@ -79,7 +79,7 @@ has an unknown bitrate with fewer than 6 channels. E-AC3 is never converted
 ### dup
 
 ```
-media-tool dup [-i list] <dir>
+mediatool dup [-i list] <dir>
 ```
 
 Read-only report of audio tracks sharing codec, bitrate, channel count and
@@ -88,14 +88,14 @@ language tag within one file. Useful before `clean`.
 ### enhance
 
 ```
-media-tool enhance [-q 22] [-engine path] [-vaapi_device dev] [-i list] [-n] <dir>
+mediatool enhance [-q 22] [-engine path] [-vaapi_device dev] [-i list] [-n] <dir>
 ```
 
 Extracts frames with hardware decoding, upscales them 2× with the
 Real-ESRGAN anime model (ncnn Vulkan) and encodes to HEVC 1080p
 (`scale=-2:1080`, aspect-preserving), written as MKV for both MKV and MP4
 inputs. Output: `<stem>_enhanced_1080p_hevc.mkv` next to the source. The
-engine binary is downloaded on first use to `~/.local/share/media-tool/`
+engine binary is downloaded on first use to `~/.local/share/mediatool/`
 (override with `-engine` or `REALESRGAN_BIN`). Frame directories are
 cleaned on exit and on interrupt.
 
@@ -107,7 +107,7 @@ path — directory and file names both count; `#` comments allowed):
 
 | File | Read by |
 |---|---|
-| `.media-tool-ignore` in the target dir | all commands |
+| `.mediatool-ignore` in the target dir | all commands |
 | `.video-scripts-ignore` in the target dir | all commands (bash-suite era compat) |
 | `.hevcconverter-ignore` / `.cleaner-ignore` / `.ac3converter-ignore` / `.enhance-ignore` / `.dupfinder-ignore` | their command |
 | `-i "a,b"` CLI list | all commands |
@@ -139,7 +139,7 @@ target: the file's directory).
 make install   # staticcheck
 make test      # vet + staticcheck + race tests
 make lint      # gofmt check
-make build     # dist/media-tool
+make build     # dist/mediatool
 ```
 
 CI runs the same checks on every push/PR; tagged releases (`v*`) build the

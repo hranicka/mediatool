@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hranicka/media-tool/internal/ignore"
-	"github.com/hranicka/media-tool/internal/media"
-	"github.com/hranicka/media-tool/internal/run"
+	"github.com/hranicka/mediatool/internal/ignore"
+	"github.com/hranicka/mediatool/internal/media"
+	"github.com/hranicka/mediatool/internal/run"
 )
 
 // fakeFF fakes both binaries; see convert_test.go for the pattern.

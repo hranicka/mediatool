@@ -16,7 +16,7 @@ test:
 
 build:
 	mkdir -p ./dist
-	go build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o ./dist/media-tool ./cmd/media-tool
+	go build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o ./dist/mediatool ./cmd/mediatool
 
 lint:
 	test -z "$$(gofmt -l .)" || (gofmt -l . && exit 1)

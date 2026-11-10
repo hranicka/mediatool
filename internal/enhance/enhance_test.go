@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hranicka/media-tool/internal/encoders"
-	"github.com/hranicka/media-tool/internal/ignore"
-	"github.com/hranicka/media-tool/internal/run"
+	"github.com/hranicka/mediatool/internal/encoders"
+	"github.com/hranicka/mediatool/internal/ignore"
+	"github.com/hranicka/mediatool/internal/run"
 )
 
 // fakeFF fakes ffmpeg (extraction no-op, encode writes the output),

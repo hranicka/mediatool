@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/hranicka/media-tool/internal/probe"
+	"github.com/hranicka/mediatool/internal/probe"
 )
 
 // Languages without a real tag are always kept by the whitelist.

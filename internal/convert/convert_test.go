@@ -9,10 +9,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hranicka/media-tool/internal/encoders"
-	"github.com/hranicka/media-tool/internal/ignore"
-	"github.com/hranicka/media-tool/internal/probe"
-	"github.com/hranicka/media-tool/internal/run"
+	"github.com/hranicka/mediatool/internal/encoders"
+	"github.com/hranicka/mediatool/internal/ignore"
+	"github.com/hranicka/mediatool/internal/probe"
+	"github.com/hranicka/mediatool/internal/run"
 )
 
 // fakeFF fakes both binaries: ffprobe JSON responses keyed by a function of

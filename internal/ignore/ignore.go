@@ -13,7 +13,7 @@ import (
 
 // sharedFiles are read for every subcommand; the second name keeps the
 // bash-suite era files working.
-var sharedFiles = []string{".media-tool-ignore", ".video-scripts-ignore"}
+var sharedFiles = []string{".mediatool-ignore", ".video-scripts-ignore"}
 
 // legacyFiles maps subcommands to their per-tool ignore file from the
 // retired mediatool/bash generations.

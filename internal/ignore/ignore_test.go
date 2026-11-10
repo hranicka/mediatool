@@ -15,7 +15,7 @@ func write(t *testing.T, path, content string) {
 
 func TestLoadUnion(t *testing.T) {
 	dir := t.TempDir()
-	write(t, filepath.Join(dir, ".media-tool-ignore"), "trailers\n# a comment\n\nsub/\r\n")
+	write(t, filepath.Join(dir, ".mediatool-ignore"), "trailers\n# a comment\n\nsub/\r\n")
 	write(t, filepath.Join(dir, ".cleaner-ignore"), "private\n")
 
 	l := Load(dir, "clean", []string{"CLI", "extra"})

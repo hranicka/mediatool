@@ -15,14 +15,14 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/hranicka/media-tool/internal/backup"
-	"github.com/hranicka/media-tool/internal/cli"
-	"github.com/hranicka/media-tool/internal/gates"
-	"github.com/hranicka/media-tool/internal/ignore"
-	"github.com/hranicka/media-tool/internal/media"
-	"github.com/hranicka/media-tool/internal/probe"
-	"github.com/hranicka/media-tool/internal/run"
-	"github.com/hranicka/media-tool/internal/walk"
+	"github.com/hranicka/mediatool/internal/backup"
+	"github.com/hranicka/mediatool/internal/cli"
+	"github.com/hranicka/mediatool/internal/gates"
+	"github.com/hranicka/mediatool/internal/ignore"
+	"github.com/hranicka/mediatool/internal/media"
+	"github.com/hranicka/mediatool/internal/probe"
+	"github.com/hranicka/mediatool/internal/run"
+	"github.com/hranicka/mediatool/internal/walk"
 )
 
 // Config holds the ac3 subcommand settings.
@@ -63,7 +63,7 @@ func Run(args []string) error {
 		slog.SetLogLoggerLevel(slog.LevelDebug)
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(os.Stderr, "usage: media-tool ac3 [flags] <directory|file>")
+		fmt.Fprintln(os.Stderr, "usage: mediatool ac3 [flags] <directory|file>")
 		return fmt.Errorf("ac3 needs exactly one directory or file argument")
 	}
 	target, err := cli.ResolveMediaTarget(fs.Arg(0), true)

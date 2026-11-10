@@ -1,4 +1,4 @@
-// Command media-tool compacts and manages a personal media library
+// Command mediatool compacts and manages a personal media library
 // (MKV/MP4) by re-encoding video to HEVC, appending compatibility audio
 // tracks, removing unwanted streams and reporting duplicates.
 package main
@@ -7,11 +7,11 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/hranicka/media-tool/internal/ac3"
-	"github.com/hranicka/media-tool/internal/clean"
-	"github.com/hranicka/media-tool/internal/convert"
-	"github.com/hranicka/media-tool/internal/dup"
-	"github.com/hranicka/media-tool/internal/enhance"
+	"github.com/hranicka/mediatool/internal/ac3"
+	"github.com/hranicka/mediatool/internal/clean"
+	"github.com/hranicka/mediatool/internal/convert"
+	"github.com/hranicka/mediatool/internal/dup"
+	"github.com/hranicka/mediatool/internal/enhance"
 )
 
 // version is set at build time via -ldflags "-X main.version=...".
@@ -19,7 +19,7 @@ var version = "dev"
 
 const usageText = `MediaTool 2.0 — media library compaction and management.
 
-Usage: media-tool <command> [flags]
+Usage: mediatool <command> [flags]
 
 Commands:
   convert   re-encode H.264 video tracks to HEVC (nvenc/qsv/vaapi/x265)
@@ -31,7 +31,7 @@ Commands:
 
 Library-touching commands work on a directory (or a single file where noted),
 honor the dot ignore files in the target directory, keep .old backups and
-support a dry run. Run "media-tool <command> -h" for details.
+support a dry run. Run "mediatool <command> -h" for details.
 `
 
 func main() {
@@ -53,7 +53,7 @@ func main() {
 	case "enhance":
 		err = enhance.Run(os.Args[2:])
 	case "version":
-		fmt.Println("media-tool " + version)
+		fmt.Println("mediatool " + version)
 		return
 	case "help", "-h", "--help":
 		fmt.Print(usageText)

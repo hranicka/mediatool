@@ -1,10 +1,10 @@
 version: 2
 
-project_name: media-tool
+project_name: mediatool
 
 builds:
-  - id: media-tool
-    main: ./cmd/media-tool
+  - id: mediatool
+    main: ./cmd/mediatool
     env:
       - CGO_ENABLED=0
     goos:

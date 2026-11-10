@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hranicka/media-tool/internal/run"
+	"github.com/hranicka/mediatool/internal/run"
 )
 
 type fakeRunner struct {
