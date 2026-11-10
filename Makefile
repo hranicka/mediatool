@@ -19,6 +19,9 @@ build:
 	go build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o ./dist/media-tool ./cmd/media-tool
 
 lint:
+	test -z "$$(gofmt -l .)" || (gofmt -l . && exit 1)
+
+fmt:
 	go fmt ./...
 
 release-check:
