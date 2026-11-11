@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Clearer convert settings header** — the run header now spells out the
+  full effective plan, defaults included, so a run is self-describing: a
+  dedicated `Quality` line names the strategy (quality target, the
+  camera/lowq source-bitrate cap, or the Chromecast 15M/level-4.1 cap),
+  and `Scale`, `Tonemap` and `Languages` always show their effective
+  value (`keep source resolution`, `off (keep HDR)`, `all`) instead of
+  appearing only when non-default. `VAAPI device` and `Force` appear when
+  relevant. The CQ value moved out of the encoder line into `Quality`.
 - **Interactive terminal output** — when stdout and stderr are terminals,
   every command renders for humans: colored status symbols per file
   (✓ processed, – skipped, ✗ failed, ⚠ notices), `[i/n]` position

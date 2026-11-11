@@ -826,10 +826,14 @@ func TestPlainOutputGolden(t *testing.T) {
 		}
 		want := strings.Join([]string{
 			"FFmpeg binary : ffmpeg",
-			"Using encoder : Nvidia NVENC (quality value: 26)",
+			"Using encoder : Nvidia NVENC",
 			"Output codec  : hevc",
 			"Preset        : movie",
+			"Quality       : CQ 26 quality target",
+			"Scale         : keep source resolution",
+			"Tonemap       : off (keep HDR)",
 			"Audio target  : copy",
+			"Languages     : all",
 			"Target        : " + dir,
 			"Ignore entries: 1",
 			strings.Repeat("=", 42),
@@ -859,10 +863,14 @@ func TestPlainOutputGolden(t *testing.T) {
 		}
 		want := strings.Join([]string{
 			"FFmpeg binary : ffmpeg",
-			"Using encoder : Nvidia NVENC (quality value: 26)",
+			"Using encoder : Nvidia NVENC",
 			"Output codec  : hevc",
 			"Preset        : movie",
+			"Quality       : CQ 26 quality target",
+			"Scale         : keep source resolution",
+			"Tonemap       : off (keep HDR)",
 			"Audio target  : copy",
+			"Languages     : all",
 			"Target        : " + dir,
 			"Ignore entries: 1",
 			"Extra         : DRY RUN",

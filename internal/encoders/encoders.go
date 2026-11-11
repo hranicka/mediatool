@@ -317,6 +317,27 @@ func (e Encoder) PlanInfo(m Mode, cq, srcVideoKbps int) string {
 	}
 }
 
+// PlanSummary describes the run-wide quality strategy for the settings
+// header, before any per-file source bitrate is known: capped modes
+// advertise their source-relative ceiling, chromecast its fixed device
+// cap. Like PlanInfo it is honest about VAAPI, whose CQP cannot carry a
+// maxrate.
+func (e Encoder) PlanSummary(m Mode, cq int) string {
+	switch m {
+	case ModeChromecast:
+		if e.Kind == VAAPI {
+			return fmt.Sprintf("CQ %d quality target (vaapi CQP has no bitrate ceiling)", cq)
+		}
+		return fmt.Sprintf("CQ %d, 15M cap, level 4.1", cq)
+	case ModeCamera:
+		return fmt.Sprintf("CQ %d, capped at ~65%% of source bitrate", cq)
+	case ModeLowQ:
+		return fmt.Sprintf("CQ %d, capped at ~50%% of source bitrate", cq)
+	default:
+		return fmt.Sprintf("CQ %d quality target", cq)
+	}
+}
+
 // probeArgs builds a minimal real encode used to test one encoder.
 func (e Encoder) probeArgs(vaapiDevice string) []string {
 	args := []string{"-hide_banner", "-v", "error", "-nostdin",

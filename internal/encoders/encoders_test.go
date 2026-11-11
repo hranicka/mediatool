@@ -312,4 +312,27 @@ func TestPlanInfo(t *testing.T) {
 	}
 }
 
+func TestPlanSummary(t *testing.T) {
+	nvenc := Encoder{Codec: CodecHEVC, Kind: NVENC}
+	cases := []struct {
+		m    Mode
+		cq   int
+		want string
+	}{
+		{ModeMovie, 22, "CQ 22 quality target"},
+		{ModeCamera, 28, "CQ 28, capped at ~65% of source bitrate"},
+		{ModeLowQ, 31, "CQ 31, capped at ~50% of source bitrate"},
+		{ModeChromecast, 22, "CQ 22, 15M cap, level 4.1"},
+	}
+	for _, c := range cases {
+		if got := nvenc.PlanSummary(c.m, c.cq); got != c.want {
+			t.Errorf("PlanSummary(%s, %d) = %q, want %q", c.m, c.cq, got, c.want)
+		}
+	}
+	// the header summary must not claim a ceiling VAAPI CQP cannot enforce
+	if got := (Encoder{Codec: CodecHEVC, Kind: VAAPI}).PlanSummary(ModeChromecast, 22); strings.Contains(got, "15M cap") {
+		t.Errorf("vaapi chromecast summary must not claim a ceiling: %q", got)
+	}
+}
+
 var _ run.Runner = &fakeRunner{}

@@ -320,29 +320,46 @@ func withExt(path, ext string) string {
 
 func (t *tool) runAll() error {
 	cfg := t.cfg
-	cqNote := ""
+	presetNote := ""
 	if cfg.Mode == encoders.ModeChromecast {
-		cqNote = ", output written as new *_CC4_FIXED.mkv"
+		presetNote = ", output written as new *_CC4_FIXED.mkv"
+	}
+	// the header spells out the full effective plan, defaults included, so
+	// a run is self-describing without guessing what a preset implies
+	scale := "keep source resolution"
+	if cfg.ScaleHeight > 0 {
+		scale = fmt.Sprintf("%dp (downscale only)", cfg.ScaleHeight)
+	}
+	tonemap := "off (keep HDR)"
+	if cfg.Tonemap {
+		tonemap = "HDR sources re-map to SDR bt709"
+	}
+	langs := "all"
+	if len(t.whitelist) > 0 {
+		langs = strings.Join(t.whitelist, " ") + " (+ no/und tags)"
 	}
 	kvs := []ui.KV{
 		ui.Pair("FFmpeg binary", t.ffmpegBin),
-		ui.Pair("Using encoder", fmt.Sprintf("%s (quality value: %d)", t.enc.Label, cfg.CQ)),
+		ui.Pair("Using encoder", t.enc.Label),
+	}
+	if t.enc.Kind == encoders.VAAPI {
+		kvs = append(kvs, ui.Pair("VAAPI device", cfg.VaapiDevice))
+	}
+	kvs = append(kvs,
 		ui.Pair("Output codec", string(cfg.Codec)),
-		ui.Pair("Preset", cfg.Preset+cqNote),
+		ui.Pair("Preset", cfg.Preset+presetNote),
+		ui.Pair("Quality", t.enc.PlanSummary(cfg.Mode, cfg.CQ)),
+		ui.Pair("Scale", scale),
+		ui.Pair("Tonemap", tonemap),
 		ui.Pair("Audio target", t.audio.desc()),
-	}
-	if len(t.whitelist) > 0 {
-		kvs = append(kvs, ui.Pair("Keep languages", strings.Join(t.whitelist, " ")+" (+ no/und tags)"))
-	}
-	if cfg.Tonemap {
-		kvs = append(kvs, ui.Pair("Tonemap", "HDR sources re-map to SDR bt709"))
+		ui.Pair("Languages", langs),
+	)
+	if cfg.Force {
+		kvs = append(kvs, ui.Pair("Force", "re-encode non-H.264 sources too"))
 	}
 	kvs = append(kvs,
 		ui.Pair("Target", cfg.Dir),
 		ui.Pair("Ignore entries", strconv.Itoa(t.ignores.Len())))
-	if cfg.ScaleHeight > 0 {
-		kvs = append(kvs, ui.Pair("Scale target", fmt.Sprintf("%dp (downscale only)", cfg.ScaleHeight)))
-	}
 	if cfg.DryRun {
 		kvs = append(kvs, ui.Pair("Extra", "DRY RUN"))
 	}
