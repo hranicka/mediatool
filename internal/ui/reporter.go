@@ -113,13 +113,16 @@ func (r *Reporter) Header(kvs []KV) {
 			fmt.Fprintf(r.out, "%s: %s\n", r.pal.Dim(fmt.Sprintf("%-14s", kv.Key)), value)
 			continue
 		}
-		fmt.Fprintf(r.out, "%-14s: %s\n", kv.Key, value)
+		if value == "DRY RUN" {
+			value = r.pal.Warn(value)
+		}
+		fmt.Fprintf(r.out, "%s: %s\n", r.pal.Dim(fmt.Sprintf("%-14s", kv.Key)), value)
 	}
 	if r.p.Interactive {
 		fmt.Fprintln(r.out, r.pal.Dim(strings.Repeat("─", 42)))
 		return
 	}
-	fmt.Fprintln(r.out, strings.Repeat("=", 42))
+	fmt.Fprintln(r.out, r.pal.Dim(strings.Repeat("=", 42)))
 }
 
 // Found announces the discovered file count (interactive rendering only).
@@ -136,7 +139,7 @@ func (r *Reporter) Found(n int) {
 func (r *Reporter) Skip(i, n int, path, reason string) {
 	r.close()
 	if !r.p.Interactive {
-		fmt.Fprintf(r.out, "Skipping (%s): %s\n", reason, path)
+		fmt.Fprintln(r.out, r.pal.Dim(fmt.Sprintf("Skipping (%s): %s", reason, path)))
 		return
 	}
 	line := fmt.Sprintf("%s %s%s %s %s", r.sym.Skip, idx(i, n), path, r.dash(), reason)
@@ -148,7 +151,7 @@ func (r *Reporter) Skip(i, n int, path, reason string) {
 func (r *Reporter) SkipInline(i, n int, path, reason string) {
 	r.close()
 	if !r.p.Interactive {
-		fmt.Fprintf(r.out, "Skipping (%s)%s\n", reason, path)
+		fmt.Fprintln(r.out, r.pal.Dim(fmt.Sprintf("Skipping (%s)%s", reason, path)))
 		return
 	}
 	r.Skip(i, n, path, reason)
@@ -159,7 +162,7 @@ func (r *Reporter) SkipInline(i, n int, path, reason string) {
 func (r *Reporter) Notice(i, n int, path, msg string) {
 	r.close()
 	if !r.p.Interactive {
-		fmt.Fprintf(r.out, "%s: %s\n", msg, path)
+		fmt.Fprintln(r.out, r.pal.Warn(fmt.Sprintf("%s: %s", msg, path)))
 		return
 	}
 	line := fmt.Sprintf("%s %s%s %s %s", r.sym.Warn, idx(i, n), path, r.dash(), msg)
@@ -171,7 +174,7 @@ func (r *Reporter) Notice(i, n int, path, msg string) {
 func (r *Reporter) OK(i, n int, path, msg string) {
 	r.close()
 	if !r.p.Interactive {
-		fmt.Fprintf(r.out, "OK (%s): %s\n", msg, path)
+		fmt.Fprintln(r.out, r.pal.Dim(fmt.Sprintf("OK (%s): %s", msg, path)))
 		return
 	}
 	line := fmt.Sprintf("%s %s%s %s %s", r.sym.Skip, idx(i, n), path, r.dash(), msg)
@@ -183,9 +186,9 @@ func (r *Reporter) OK(i, n int, path, msg string) {
 func (r *Reporter) Would(verb string, i, n int, path, summary string, details ...string) {
 	r.close()
 	if !r.p.Interactive {
-		fmt.Fprintf(r.out, "%s: %s (%s)\n", verb, path, summary)
+		fmt.Fprintln(r.out, r.pal.Info(fmt.Sprintf("%s: %s (%s)", verb, path, summary)))
 		for _, d := range details {
-			fmt.Fprintf(r.out, "  - %s\n", d)
+			fmt.Fprintln(r.out, r.pal.Dim("  - "+d))
 		}
 		return
 	}
@@ -204,12 +207,12 @@ func (r *Reporter) Start(verb string, i, n int, path, size string, total time.Du
 	r.total = total
 	if !r.p.Interactive {
 		if size != "" {
-			fmt.Fprintf(r.out, "%s: %s (%s)\n", verb, path, size)
+			fmt.Fprintln(r.out, r.pal.Info(fmt.Sprintf("%s: %s (%s)", verb, path, size)))
 		} else {
-			fmt.Fprintf(r.out, "%s: %s\n", verb, path)
+			fmt.Fprintln(r.out, r.pal.Info(fmt.Sprintf("%s: %s", verb, path)))
 		}
 		for _, d := range details {
-			fmt.Fprintf(r.out, "  %s\n", d)
+			fmt.Fprintln(r.out, r.pal.Dim("  "+d))
 		}
 		return
 	}
@@ -227,11 +230,7 @@ func (r *Reporter) Start(verb string, i, n int, path, size string, total time.Du
 func (r *Reporter) Detail(format string, args ...any) {
 	r.close()
 	msg := fmt.Sprintf(format, args...)
-	if r.p.Interactive {
-		fmt.Fprintln(r.out, r.pal.Dim("  "+msg))
-		return
-	}
-	fmt.Fprintf(r.out, "  %s\n", msg)
+	fmt.Fprintln(r.out, r.pal.Dim("  "+msg))
 }
 
 // Progress redraws the in-place bar line for the file started last; a
@@ -283,10 +282,10 @@ func (r *Reporter) status(s string) {
 func (r *Reporter) Success(verb, path string, inBytes, outBytes int64, backup bool, took time.Duration) {
 	if !r.p.Interactive {
 		if backup {
-			fmt.Fprintf(r.out, "%s: %s (%s -> %s, backup: %s.old)\n", verb, path, media.HumanBytes(inBytes), media.HumanBytes(outBytes), path)
+			fmt.Fprintln(r.out, r.pal.Good(fmt.Sprintf("%s: %s (%s -> %s, backup: %s.old)", verb, path, media.HumanBytes(inBytes), media.HumanBytes(outBytes), path)))
 			return
 		}
-		fmt.Fprintf(r.out, "%s: %s (original kept)\n", verb, path)
+		fmt.Fprintln(r.out, r.pal.Good(fmt.Sprintf("%s: %s (original kept)", verb, path)))
 		return
 	}
 	line := fmt.Sprintf("  %s %s %s %s", r.pal.Good(r.sym.Done), media.HumanBytes(inBytes), r.pal.Dim(r.sym.Arrow), media.HumanBytes(outBytes))
@@ -307,7 +306,7 @@ func (r *Reporter) Success(verb, path string, inBytes, outBytes int64, backup bo
 func (r *Reporter) Fail(msg, detail string) {
 	r.close()
 	if !r.p.Interactive {
-		fmt.Fprintf(r.out, "Error: %s\n", msg)
+		fmt.Fprintln(r.out, r.pal.Bad("Error: "+msg))
 		return
 	}
 	fmt.Fprintf(r.out, "\r\x1b[K  %s %s\n", r.pal.Bad(r.sym.Fail), r.pal.Bad(msg))
@@ -325,7 +324,7 @@ func (r *Reporter) Fail(msg, detail string) {
 // line pretty.
 func (r *Reporter) Note(msg string) {
 	if !r.p.Interactive {
-		fmt.Fprintln(os.Stderr, msg)
+		fmt.Fprintln(os.Stderr, r.pal.Warn(msg))
 		return
 	}
 	r.close()
@@ -339,7 +338,7 @@ func (r *Reporter) Note(msg string) {
 // first attempt into the progress bar.
 func (r *Reporter) Attempt(enc, label string, i, n int) {
 	if !r.p.Interactive {
-		fmt.Fprintf(r.out, "  encoding with %s (attempt %d/%d: %s)...\n", enc, i, n, label)
+		fmt.Fprintln(r.out, r.pal.Dim(fmt.Sprintf("  encoding with %s (attempt %d/%d: %s)...", enc, i, n, label)))
 		return
 	}
 	if i > 1 {
@@ -351,7 +350,7 @@ func (r *Reporter) Attempt(enc, label string, i, n int) {
 // AttemptFailed reports a failed encode attempt.
 func (r *Reporter) AttemptFailed(label string, i, n int) {
 	if !r.p.Interactive {
-		fmt.Fprintf(r.out, "  attempt %d (%s) failed...\n", i, label)
+		fmt.Fprintln(r.out, r.pal.Warn(fmt.Sprintf("  attempt %d (%s) failed...", i, label)))
 		return
 	}
 	r.close()
@@ -363,10 +362,6 @@ func (r *Reporter) AttemptFailed(label string, i, n int) {
 func (r *Reporter) Raw(tone Tone, format string, args ...any) {
 	r.close()
 	msg := fmt.Sprintf(format, args...)
-	if !r.p.Interactive {
-		fmt.Fprint(r.out, msg)
-		return
-	}
 	nl := ""
 	if s, ok := strings.CutSuffix(msg, "\n"); ok {
 		msg, nl = s, "\n"
@@ -396,12 +391,18 @@ func (r *Reporter) Raw(tone Tone, format string, args ...any) {
 func (r *Reporter) Summary(lead, doneLabel, skipLabel string, o Outcome) {
 	r.close()
 	if !r.p.Interactive {
-		fmt.Fprintln(r.out, strings.Repeat("=", 42))
+		fmt.Fprintln(r.out, r.pal.Dim(strings.Repeat("=", 42)))
+		var line string
 		if skipLabel == "" {
-			fmt.Fprintf(r.out, "%s %s: %d.\n", lead, doneLabel, o.Done)
-			return
+			line = fmt.Sprintf("%s %s: %d.", lead, doneLabel, o.Done)
+		} else {
+			line = fmt.Sprintf("%s %s: %d, %s: %d, failed: %d.", lead, doneLabel, o.Done, skipLabel, o.Skipped, o.Failed)
 		}
-		fmt.Fprintf(r.out, "%s %s: %d, %s: %d, failed: %d.\n", lead, doneLabel, o.Done, skipLabel, o.Skipped, o.Failed)
+		if o.Failed > 0 {
+			fmt.Fprintln(r.out, r.pal.Bad(line))
+		} else {
+			fmt.Fprintln(r.out, r.pal.Good(line))
+		}
 		return
 	}
 

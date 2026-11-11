@@ -201,3 +201,36 @@ func TestPrettySummary(t *testing.T) {
 		}
 	}
 }
+
+// TestForcedColorKeepsPlainText pins that CLICOLOR_FORCE-style coloring
+// (Color on, Interactive off) only adds ANSI codes: the text underneath
+// stays byte-identical to the uncolored plain rendering.
+func TestForcedColorKeepsPlainText(t *testing.T) {
+	events := func(rep *Reporter) {
+		rep.Header([]KV{Pair("FFmpeg binary", "ffmpeg"), Pair("Extra", "DRY RUN")})
+		rep.Skip(1, 3, "/a.mkv", "ignored")
+		rep.Notice(2, 3, "/b.mkv", "Forcing re-encode of vc1 source")
+		rep.OK(3, 3, "/c.mkv", "nothing to remove")
+		rep.Would("Would convert", 1, 3, "/d.mkv", "1.0M", "append AC3 640k for audio #0 (dts, lang 'cs')")
+		rep.Start("Processing", 2, 3, "/e.mkv", "4.2G", 0, "plan: CQ 26")
+		rep.Detail("HDR10 source: kept")
+		rep.Attempt("NVENC", "hw", 1, 3)
+		rep.AttemptFailed("hw", 1, 3)
+		rep.Success("Converted", "/e.mkv", 1000, 500, true, 0)
+		rep.Success("Created", "/f.mkv", 0, 0, false, 0)
+		rep.Fail("failed to convert /g.mkv (left untouched)", "")
+		rep.Raw(WarnTone, "warning: %s\n", "deprecated")
+		rep.Summary("Done.", "Converted", "skipped", Outcome{Done: 1, Skipped: 1, Failed: 1})
+	}
+
+	var plainBuf, colorBuf bytes.Buffer
+	events(New(&plainBuf, Profile{}))
+	events(New(&colorBuf, Profile{Color: true}))
+
+	if got, want := stripANSI(colorBuf.String()), plainBuf.String(); got != want {
+		t.Errorf("forced color changed the text:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+	if !strings.Contains(colorBuf.String(), "\x1b[") {
+		t.Error("forced color must emit ANSI codes")
+	}
+}
