@@ -10,6 +10,11 @@
   value (`keep source resolution`, `off (keep HDR)`, `all`) instead of
   appearing only when non-default. `VAAPI device` and `Force` appear when
   relevant. The CQ value moved out of the encoder line into `Quality`.
+- **Aligned `-p`/`-q` help** — both flags now list the presets in the same
+  order (movie, tv, tablet, camera, lowq, chromecast), and the `-q`
+  defaults are generated from the presets table so the help can never
+  drift from the actual defaults again. The redundant inline `(default)`
+  marker on `-p` is gone (the flag's own `(default "movie")` remains).
 - **Interactive terminal output** — when stdout and stderr are terminals,
   every command renders for humans: colored status symbols per file
   (✓ processed, – skipped, ✗ failed, ⚠ notices), `[i/n]` position

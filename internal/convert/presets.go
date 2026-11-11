@@ -73,6 +73,32 @@ func presetNames() []string {
 	return []string{"movie", "tv", "tablet", "camera", "lowq", "chromecast"}
 }
 
+// effectiveCQ is the preset's quality value, falling back to the mode
+// default when the preset does not override it.
+func (p Preset) effectiveCQ() int {
+	if p.CQ != 0 {
+		return p.CQ
+	}
+	return p.Mode.DefaultCQ()
+}
+
+// presetHelp lists the preset names in canonical order for the -p flag.
+func presetHelp() string {
+	return strings.Join(presetNames(), ", ")
+}
+
+// qualityHelp lists each preset's effective default CQ in the same order
+// as presetHelp, so the -p and -q flags stay aligned. Both are derived
+// from the presets table so the help can never drift from the defaults.
+func qualityHelp() string {
+	names := presetNames()
+	parts := make([]string, 0, len(names))
+	for _, name := range names {
+		parts = append(parts, fmt.Sprintf("%s %d", name, presets[name].effectiveCQ()))
+	}
+	return strings.Join(parts, ", ")
+}
+
 // audioTarget describes what happens to a converted file's audio streams.
 type audioTarget struct {
 	kind     string // "copy", "aac" or "ac3"

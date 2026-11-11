@@ -63,6 +63,24 @@ func TestApplyPreset(t *testing.T) {
 	}
 }
 
+func TestFlagHelp(t *testing.T) {
+	if got := presetHelp(); got != "movie, tv, tablet, camera, lowq, chromecast" {
+		t.Errorf("presetHelp order: %q", got)
+	}
+	want := "movie 22, tv 26, tablet 33, camera 28, lowq 31, chromecast 22"
+	if got := qualityHelp(); got != want {
+		t.Errorf("qualityHelp = %q, want %q", got, want)
+	}
+	// -q must list the presets in the same order as -p
+	var qNames []string
+	for _, part := range strings.Split(qualityHelp(), ", ") {
+		qNames = append(qNames, strings.Fields(part)[0])
+	}
+	if strings.Join(qNames, ", ") != presetHelp() {
+		t.Errorf("-q order %q must match -p order %q", qNames, presetHelp())
+	}
+}
+
 func TestParseAudio(t *testing.T) {
 	cases := []struct {
 		in   string
