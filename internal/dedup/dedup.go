@@ -23,6 +23,7 @@ import (
 	"github.com/hranicka/mediatool/internal/probe"
 	"github.com/hranicka/mediatool/internal/run"
 	"github.com/hranicka/mediatool/internal/ui"
+	"github.com/hranicka/mediatool/internal/vhash"
 	"github.com/hranicka/mediatool/internal/walk"
 )
 
@@ -56,7 +57,7 @@ type item struct {
 	width    int
 	height   int
 	codec    string
-	hashes   [][hashLen]byte
+	hashes   [][vhash.HashLen]byte
 }
 
 // Run executes the dedup subcommand.
@@ -205,7 +206,7 @@ func (t *tool) extract(items []item, candidates []int) {
 	for k, idx := range candidates {
 		it := &items[idx]
 		t.rep.Phase("hashing %d/%d %s (decoding can take a while)", k+1, len(candidates), filepath.Base(it.path))
-		hashes, err := extractSignatures(t.r, t.ffmpegBin, it.path, t.cfg.Interval)
+		hashes, err := vhash.Extract(t.r, t.ffmpegBin, it.path, t.cfg.Interval)
 		if err != nil {
 			t.rep.Note(fmt.Sprintf("note: %s: %v", it.path, err))
 			continue
@@ -220,7 +221,7 @@ func (t *tool) matchPairs(items []item) [][2]int {
 	// the window keeps the frame walk on track through shifted starts and
 	// framerate drift: +-max(25 frames, 100 s) around the previous match
 	window := int(math.Max(25, 100/t.cfg.Interval))
-	maxBits := int(t.cfg.MaxDist * hashLen * 8)
+	maxBits := int(t.cfg.MaxDist * vhash.HashLen * 8)
 	var matched [][2]int
 	for i := range items {
 		if len(items[i].hashes) == 0 {

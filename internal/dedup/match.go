@@ -1,6 +1,10 @@
 package dedup
 
-import "math"
+import (
+	"math"
+
+	"github.com/hranicka/mediatool/internal/vhash"
+)
 
 // durationCompatible reports whether two durations are close enough for a
 // candidate pair: a fixed 10 s floor covers small header/trailer or
@@ -16,7 +20,7 @@ func durationCompatible(d1, d2, tolPct float64) bool {
 // framerate drift stay covered (the align_audio.py find_matches scheme).
 // Returns the fraction of driver frames with a reliable match (hamming
 // distance <= maxBits); bails out early when min-match is unreachable.
-func matchFraction(a, b [][hashLen]byte, window, maxBits int, minMatch float64) float64 {
+func matchFraction(a, b [][vhash.HashLen]byte, window, maxBits int, minMatch float64) float64 {
 	if len(a) == 0 || len(b) == 0 {
 		return 0
 	}
@@ -40,7 +44,7 @@ func matchFraction(a, b [][hashLen]byte, window, maxBits int, minMatch float64) 
 		}
 		best, bestDist := lo, -1
 		for k := lo; k < hi; k++ {
-			if d := hamming(a[j], b[k]); bestDist < 0 || d < bestDist {
+			if d := vhash.Hamming(a[j], b[k]); bestDist < 0 || d < bestDist {
 				best, bestDist = k, d
 			}
 		}

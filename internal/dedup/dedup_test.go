@@ -2,6 +2,8 @@ package dedup
 
 import (
 	"bytes"
+	"fmt"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,7 +12,76 @@ import (
 	"github.com/hranicka/mediatool/internal/ignore"
 	"github.com/hranicka/mediatool/internal/media"
 	"github.com/hranicka/mediatool/internal/ui"
+	"github.com/hranicka/mediatool/internal/vhash"
 )
+
+// patternFrame fills one vhash.Side x vhash.Side gray frame with
+// deterministic pseudo-random content seeded by the frame index: frame t
+// is always the same pixels, so the same content produces the same hash
+// sequence (possibly shifted), while different frames hash far apart.
+func patternFrame(t int) []byte {
+	rng := rand.New(rand.NewSource(int64(t)))
+	frame := make([]byte, vhash.FrameLen)
+	rng.Read(frame)
+	return frame
+}
+
+// framesAt builds the raw stream of count frames starting at frame index
+// start (frame k of the stream is pattern frame start+k).
+func framesAt(start, count int) []byte {
+	buf := make([]byte, 0, count*vhash.FrameLen)
+	for t := start; t < start+count; t++ {
+		buf = append(buf, patternFrame(t)...)
+	}
+	return buf
+}
+
+// noiseFrames produces per-frame pseudo-random gray data, i.e. content no
+// other file shares.
+func noiseFrames(seed, count int) []byte {
+	rng := rand.New(rand.NewSource(int64(seed)))
+	buf := make([]byte, count*vhash.FrameLen)
+	rng.Read(buf)
+	return buf
+}
+
+type fakeFF struct {
+	probeFor  func(src string) (string, bool)
+	framesFor func(src string) []byte
+	frameArgs [][]string
+}
+
+func (f *fakeFF) Output(name string, args ...string) ([]byte, error) {
+	if name == "ffprobe" {
+		src := args[len(args)-1]
+		if f.probeFor != nil {
+			if json, ok := f.probeFor(src); ok {
+				return []byte(json), nil
+			}
+		}
+		return []byte(`{"streams":[],"format":{}}`), nil
+	}
+	if name == "ffmpeg" {
+		for i := 0; i+1 < len(args); i++ {
+			if args[i] == "-i" {
+				f.frameArgs = append(f.frameArgs, args)
+				if f.framesFor != nil {
+					return f.framesFor(args[i+1]), nil
+				}
+			}
+		}
+		return []byte{}, nil
+	}
+	return []byte{}, nil
+}
+
+func (f *fakeFF) Stream(name string, args ...string) ([]byte, error) {
+	return nil, nil
+}
+
+func videoJSON(codec string, w, h int, dur string) string {
+	return fmt.Sprintf(`{"streams":[{"index":0,"codec_name":"%s","codec_type":"video","width":%d,"height":%d,"disposition":{"attached_pic":0}}],"format":{"duration":"%s","size":"1000","bit_rate":"1"}}`, codec, w, h, dur)
+}
 
 // mustIgnore loads the ignore list, dropping the deprecation warnings
 // (only the ignore package's own tests assert those).

@@ -3,20 +3,22 @@ package dedup
 import (
 	"math/rand"
 	"testing"
+
+	"github.com/hranicka/mediatool/internal/vhash"
 )
 
 // hashesOf hashes raw frames into signature lists.
-func hashesOf(raw []byte) [][hashLen]byte {
-	n := len(raw) / frameLen
-	out := make([][hashLen]byte, 0, n)
+func hashesOf(raw []byte) [][vhash.HashLen]byte {
+	n := len(raw) / vhash.FrameLen
+	out := make([][vhash.HashLen]byte, 0, n)
 	for i := 0; i < n; i++ {
-		out = append(out, frameHash(raw[i*frameLen:(i+1)*frameLen]))
+		out = append(out, vhash.FrameHash(raw[i*vhash.FrameLen:(i+1)*vhash.FrameLen]))
 	}
 	return out
 }
 
-func randomHashes(rng *rand.Rand, n int) [][hashLen]byte {
-	out := make([][hashLen]byte, n)
+func randomHashes(rng *rand.Rand, n int) [][vhash.HashLen]byte {
+	out := make([][vhash.HashLen]byte, n)
 	for i := range out {
 		rng.Read(out[i][:])
 	}
@@ -26,7 +28,7 @@ func randomHashes(rng *rand.Rand, n int) [][hashLen]byte {
 func TestMatchFractionExactCopy(t *testing.T) {
 	a := hashesOf(framesAt(0, 20))
 	b := hashesOf(framesAt(0, 20))
-	if got := matchFraction(a, b, 5, hashLen*8/5, 0.8); got != 1 {
+	if got := matchFraction(a, b, 5, vhash.HashLen*8/5, 0.8); got != 1 {
 		t.Errorf("identical content: got %v, want 1", got)
 	}
 }
@@ -36,7 +38,7 @@ func TestMatchFractionShiftedCopy(t *testing.T) {
 	// walked into range by the window
 	a := hashesOf(framesAt(0, 20))
 	b := hashesOf(framesAt(3, 15))
-	if got := matchFraction(a, b, 5, hashLen*8/5, 0.8); got != 1 {
+	if got := matchFraction(a, b, 5, vhash.HashLen*8/5, 0.8); got != 1 {
 		t.Errorf("shifted copy: got %v, want 1", got)
 	}
 }
@@ -45,11 +47,11 @@ func TestMatchFractionDrift(t *testing.T) {
 	// a framerate variant: b's frame k matches a's frame k + k/4, a
 	// progressively drifting offset the window walk must follow
 	a := hashesOf(framesAt(0, 40))
-	b := make([][hashLen]byte, 0, 30)
+	b := make([][vhash.HashLen]byte, 0, 30)
 	for k := 0; k < 30; k++ {
 		b = append(b, a[k+k/4])
 	}
-	if got := matchFraction(a, b, 5, hashLen*8/5, 0.8); got < 0.8 {
+	if got := matchFraction(a, b, 5, vhash.HashLen*8/5, 0.8); got < 0.8 {
 		t.Errorf("drifting copy: got %v, want >= 0.8", got)
 	}
 }
@@ -58,7 +60,7 @@ func TestMatchFractionUnrelated(t *testing.T) {
 	rng := rand.New(rand.NewSource(42))
 	a := hashesOf(framesAt(0, 20))
 	b := randomHashes(rng, 20)
-	if got := matchFraction(a, b, 5, hashLen*8/5, 0.8); got >= 0.8 {
+	if got := matchFraction(a, b, 5, vhash.HashLen*8/5, 0.8); got >= 0.8 {
 		t.Errorf("unrelated content: got %v, want < 0.8", got)
 	}
 }
@@ -68,7 +70,7 @@ func TestMatchFractionShiftedBeyondWindow(t *testing.T) {
 	// cannot reach the true offset)
 	a := hashesOf(framesAt(0, 20))
 	b := hashesOf(framesAt(10, 15))
-	if got := matchFraction(a, b, 5, hashLen*8/5, 0.8); got >= 0.8 {
+	if got := matchFraction(a, b, 5, vhash.HashLen*8/5, 0.8); got >= 0.8 {
 		t.Errorf("shift beyond the window: got %v, want < 0.8", got)
 	}
 }
