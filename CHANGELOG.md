@@ -52,6 +52,13 @@
   `cam.ts` → `cam.mp4`), the original is kept as `<source>.old`, and the
   rename is reported as an `output:` line. MKV sources and Chromecast mode
   are unchanged.
+- **Higher-quality NVENC encoding** — the NVENC quality block now adds
+  temporal AQ, 32-frame lookahead and fullres multipass, spending bits
+  better on motion and grain at the same CQ (HEVC and AV1).
+- **New `hq` preset** — `convert -p hq` targets CQ 20 while keeping the
+  source resolution and HDR (audio copy), for action/grainy film or
+  near-transparent 1080p/4K HDR. `movie` (CQ 26) stays the compaction
+  default; any preset is overridable with `-q`.
 
 ## 2.0.1
 
