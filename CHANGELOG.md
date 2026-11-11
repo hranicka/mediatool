@@ -33,6 +33,17 @@
   also surfaces the case where the file is otherwise untouched ("nothing
   to remove"), which previously gave no hint that a non-whitelisted track
   survived.
+- **Fixed: broadcast "original audio" dropped** — the reserved ISO 639-2
+  local-use codes `qaa`–`qtz` (used by DVB broadcasts for the original /
+  undefined soundtrack, commonly `qaa`) are now always kept by the
+  language whitelist, like `und`. Previously `clean` and `convert -l`
+  removed them when not cs/en, dropping the original audio of TV
+  recordings.
+- **clean skips broadcast dump containers** — `.ts/.mts/.m2ts/.mpg/.mpeg`
+  are skipped (with a reason) instead of remuxed: clean only maps
+  video/audio/subtitles, so it silently dropped teletext/data streams and
+  rewrote the container under the original name. Use `convert` for these
+  formats; clean handles `.mkv`/`.mp4`.
 
 ## 2.0.1
 

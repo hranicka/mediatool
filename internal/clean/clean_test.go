@@ -271,6 +271,24 @@ func TestCleanSoleTrackNoticeQuiet(t *testing.T) {
 	}
 }
 
+func TestCleanSkipsBroadcast(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "part1.ts")
+	writeFile(t, src, 1000)
+
+	ff := &fakeFF{probeFor: func(string) (string, bool) { return libraryJSON(), true }}
+	out := &bytes.Buffer{}
+	tl := newTestTool(t, dir, ff, &Config{Target: dir, Langs: "cs,en"}, out)
+	tl.processFile(1, 1, src)
+
+	if tl.untouched != 1 || tl.cleaned != 0 || len(ff.remuxLog) != 0 {
+		t.Errorf("broadcast container must be skipped untouched: %+v out=%s", tl, out.String())
+	}
+	if !strings.Contains(out.String(), "broadcast container") {
+		t.Errorf("skip reason missing: %s", out.String())
+	}
+}
+
 func TestCleanNoVideo(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "audio.mkv")

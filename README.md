@@ -70,10 +70,10 @@ an explicitly passed flag (`-p tablet -r 1080p -q 28 -a copy`):
   the `ac3` command's rules, in the same encode pass.
 - **Track cleanup** (`-l cs,en`): audio and subtitle tracks outside the
   language whitelist are dropped during the encode, by the `clean`
-  command's rules (whitelist expansion, untagged tracks always stay, sole
-  tracks are never removed). The plan lines list every removal; a
-  stream-count gate verifies the output. E.g. the classic one-shot library
-  sweep: `mediatool convert -q 22 -l cs,en <dir>`.
+  command's rules (whitelist expansion, untagged and reserved `qaa`–`qtz`
+  tracks always stay, sole tracks are never removed). The plan lines list
+  every removal; a stream-count gate verifies the output. E.g. the classic
+  one-shot library sweep: `mediatool convert -q 22 -l cs,en <dir>`.
 - **Deinterlace is automatic**: sources flagged interlaced (field order
   tt/tb/bt/bb) are yadif-deinterlaced before scaling, on every backend.
 - `-r 1080p` downscales only (never upscales), aspect ratio preserved.
@@ -96,12 +96,17 @@ mediatool clean [-l cs,en] [-e] [-i list] [-n] <dir|file>
 ```
 
 Removes audio and subtitle tracks whose language tag is outside the
-whitelist (`cs,en` expand to cs/ces/cze/cz and en/eng; missing/und/unknown
-tags always count as kept). A stream is kept when it is the only track of
-its type unless `-e`. Cover-art video streams are always removed. Pure
+whitelist (`cs,en` expand to cs/ces/cze/cz and en/eng; full names like
+`English`/`Czech` match too). Missing/und/unknown tags and the reserved
+local-use codes `qaa`–`qtz` (broadcast "original audio") always count as
+kept. A stream is kept when it is the only track of its type unless `-e`
+(flagged with a notice). Cover-art video streams are always removed. Pure
 `-c copy` remux — never re-encodes. Verified by duration, size and
-stream-count gates. Note: MP4 files usually carry no language tags, so
-cleaning them is mostly a no-op except cover-art removal.
+stream-count gates. Only `.mkv`/`.mp4` are processed; broadcast dumps
+(`.ts/.mts/.m2ts/.mpg/.mpeg`) are skipped — clean would drop their
+teletext/data streams — use `convert` for those. Note: MP4 files usually
+carry no language tags, so cleaning them is mostly a no-op except
+cover-art removal.
 
 ### ac3
 

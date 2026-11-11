@@ -244,7 +244,23 @@ func PlanTracks(info *probe.Info, whitelist []string, purgeSole bool) TrackPlan 
 	return plan
 }
 
+// broadcastContainer reports whether path is a broadcast/dump container
+// clean cannot remux losslessly: it only maps video/audio/subtitles (so
+// data streams like teletext are dropped) and would rewrite the container
+// under the original name. convert handles these formats instead.
+func broadcastContainer(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".ts", ".mts", ".m2ts", ".mpg", ".mpeg":
+		return true
+	}
+	return false
+}
+
 func (t *tool) processFile(i, n int, path string) {
+	if broadcastContainer(path) {
+		t.skip(i, n, path, "broadcast container; clean only handles mkv/mp4")
+		return
+	}
 	info, err := probe.Probe(t.r, t.ffprobeBin, path)
 	if err != nil {
 		t.skip(i, n, path, fmt.Sprintf("cannot probe: %v", err))
