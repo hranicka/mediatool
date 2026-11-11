@@ -488,6 +488,36 @@ func TestConvertLangCleanup(t *testing.T) {
 	}
 }
 
+func TestConvertLangReservedQaaKept(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "movie.mkv")
+	writeFile(t, src, 1_000_000)
+
+	// cs audio plus a reserved local-use "qaa" track (broadcast original
+	// audio): qaa carries no real language, so it stays even though it is
+	// neither whitelisted nor the sole track
+	csAudio := `{"index":1,"codec_name":"ac3","codec_type":"audio","channels":6,"bit_rate":"448000","tags":{"language":"cs"}}`
+	qaaAudio := `{"index":2,"codec_name":"mp2","codec_type":"audio","channels":2,"bit_rate":"192000","tags":{"language":"qaa"}}`
+	ff := &fakeFF{probeFor: func(src string) (string, bool) {
+		if strings.HasSuffix(filepath.Base(src), ".tmp") {
+			return tmpJSON(600.0, csAudio, qaaAudio), true
+		}
+		return withAudio(h264JSON, csAudio+","+qaaAudio), true
+	}, encSize: 500_000}
+	out := &bytes.Buffer{}
+	tl := newTestTool(t, dir, ff, &Config{Dir: dir, Mode: encoders.ModeMovie, CQ: 26, Langs: "cs,en"}, out)
+	tl.whitelist = media.ExpandWhitelist([]string{"cs", "en"})
+	tl.processFile(1, 1, src)
+
+	if tl.converted != 1 || tl.failed != 0 {
+		t.Fatalf("converted: %s (out: %s)", runOutput(tl), out.String())
+	}
+	args := firstEncode(t, ff)
+	if hasPair(args, "-map", "-0:a:0") || hasPair(args, "-map", "-0:a:1") {
+		t.Errorf("reserved qaa track must not be dropped: %v", args)
+	}
+}
+
 func TestConvertLangSoleAudioKept(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "movie.mkv")

@@ -25,16 +25,31 @@ func TestLangKept(t *testing.T) {
 	wl := ExpandWhitelist([]string{"cs", "en"})
 
 	kept := []string{"", "und", "unknown", "cs", "CES", "cze", "cz", "en", "ENG", "eng",
-		"English", "english", "Czech", "czech"}
+		"English", "english", "Czech", "czech", "qaa", "qtz", "QAA", "qcz"}
 	for _, tag := range kept {
 		if !LangKept(tag, wl) {
 			t.Errorf("tag %q should be kept", tag)
 		}
 	}
-	dropped := []string{"ger", "rus", "jpn", "German", "French"}
+	dropped := []string{"ger", "rus", "jpn", "German", "French", "qua"}
 	for _, tag := range dropped {
 		if LangKept(tag, wl) {
 			t.Errorf("tag %q should be dropped", tag)
+		}
+	}
+}
+
+func TestReservedLocal(t *testing.T) {
+	reserved := []string{"qaa", "qaz", "qba", "qcz", "qta", "qtz"}
+	for _, tag := range reserved {
+		if !reservedLocal(tag) {
+			t.Errorf("%q is in the qaa..qtz local-use range", tag)
+		}
+	}
+	notReserved := []string{"qua", "qzz", "q", "qaaa", "eng", "und", ""}
+	for _, tag := range notReserved {
+		if reservedLocal(tag) {
+			t.Errorf("%q is outside the qaa..qtz local-use range", tag)
 		}
 	}
 }

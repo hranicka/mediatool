@@ -58,12 +58,23 @@ func ExpandWhitelist(langs []string) []string {
 	return out
 }
 
+// reservedLocal reports whether tag is an ISO 639-2 local-use code
+// (qaa..qtz). Broadcasts tag the original/undefined audio with these
+// (commonly "qaa"), so they carry no real language info and are always
+// kept, like und.
+func reservedLocal(tag string) bool {
+	return len(tag) == 3 && tag[0] == 'q' &&
+		tag[1] >= 'a' && tag[1] <= 't' &&
+		tag[2] >= 'a' && tag[2] <= 'z'
+}
+
 // LangKept reports whether a stream's language tag passes the whitelist
 // (case-insensitive on both sides, full names resolved to codes;
-// missing/und/unknown tags always count as kept).
+// missing/und/unknown tags and reserved local-use codes always count as
+// kept).
 func LangKept(tag string, whitelist []string) bool {
 	tag = normalizeLang(tag)
-	if untagged[tag] {
+	if untagged[tag] || reservedLocal(tag) {
 		return true
 	}
 	for _, w := range whitelist {
