@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.1.1
+
+- **clean tolerates the remux index overhead for tiny removals** — removing
+  a small stream (cover art, a lone subtitle track) from a cue-less source
+  loses to the seek index the remux rewrites (measured ~14 KB for 750
+  keyframes), so the strict smaller-size gate rejected the clean on every
+  run and the file was never touched. The size gate now allows the source
+  size plus a modeled index budget: one index entry per frame in the worst
+  case (duration × fps of the first real video stream) plus a 64 KB
+  allowance for tags and headers. Re-encode outputs still must shrink.
+
 ## 2.1.0
 
 - **`-no-backup` for convert/clean/ac3** — replaces files in place without
