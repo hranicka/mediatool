@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.1.0
 
 - **`-no-backup` for convert/clean/ac3** — replaces files in place without
   creating a `.old` backup; the original is removed only after the new

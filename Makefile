@@ -6,7 +6,7 @@ VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 all: test build
 
 install:
-	go install honnef.co/go/tools/cmd/staticcheck@latest
+	go install honnef.co/go/tools/cmd/staticcheck@2025.1.1
 	go mod download
 
 test:
