@@ -172,6 +172,28 @@ func TestDedupRunAll(t *testing.T) {
 	}
 }
 
+func TestReportSelfSimilarNote(t *testing.T) {
+	items := []item{
+		{path: "/x/a.mkv", size: 1000, width: 1920, height: 1080, codec: "h264", duration: 100, hasDur: true, bg: 60},
+		{path: "/x/b.mp4", size: 800, width: 1920, height: 1080, codec: "h264", duration: 100, hasDur: true, bg: 500},
+	}
+
+	out := &bytes.Buffer{}
+	tl := &tool{rep: ui.New(out, ui.Profile{})}
+	tl.report(items, [][]int{{0, 1}}, 0)
+	if !strings.Contains(out.String(), "highly self-similar (background median 60") {
+		t.Errorf("self-similar group must carry a caution note: %s", out.String())
+	}
+
+	// content-rich members: no note
+	items[0].bg = 500
+	out.Reset()
+	tl.report(items, [][]int{{0, 1}}, 0)
+	if strings.Contains(out.String(), "self-similar") {
+		t.Errorf("rich-content group must not warn: %s", out.String())
+	}
+}
+
 func TestDedupRunAllIgnores(t *testing.T) {
 	dir := t.TempDir()
 	a := filepath.Join(dir, "movie.mkv")

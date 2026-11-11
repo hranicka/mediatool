@@ -58,6 +58,7 @@ type item struct {
 	height   int
 	codec    string
 	hashes   [][vhash.HashLen]byte
+	bg       int // median background distance, -1 when unknown
 }
 
 // Run executes the dedup subcommand.
@@ -203,6 +204,7 @@ func (t *tool) probeItem(path string) (item, error) {
 // extract hashes the frame signatures of every candidate item; a failed
 // extraction surfaces as a note and leaves the item out of the pairing.
 func (t *tool) extract(items []item, candidates []int) {
+	minFrames := max(1, int(5/t.cfg.Interval))
 	for k, idx := range candidates {
 		it := &items[idx]
 		t.rep.Phase("hashing %d/%d %s (decoding can take a while)", k+1, len(candidates), filepath.Base(it.path))
@@ -212,7 +214,8 @@ func (t *tool) extract(items []item, candidates []int) {
 			continue
 		}
 		it.hashes = hashes
-		slog.Debug("signatures", "path", it.path, "frames", len(hashes))
+		it.bg = vhash.BackgroundDistance(hashes, minFrames, 200)
+		slog.Debug("signatures", "path", it.path, "frames", len(hashes), "background", it.bg)
 	}
 }
 
@@ -266,6 +269,9 @@ func (t *tool) report(items []item, groups [][]int, elapsed time.Duration) {
 			t.rep.Raw(ui.Neutral, "  %-5s%s (%dx%d %s, %s, %s)\n", tag, items[m].path,
 				items[m].width, items[m].height, items[m].codec, clock(items[m].duration), media.HumanBytes(items[m].size))
 		}
+		if bg := groupBackground(items, members); bg >= 0 && bg < vhash.SelfSimilarBits {
+			t.rep.Raw(ui.WarnTone, "  note: member frames are highly self-similar (background median %d of %d bits) - matches may be spurious, verify manually before deleting\n", bg, vhash.Side*vhash.Side)
+		}
 	}
 	if len(groups) > 0 {
 		t.rep.Raw(ui.Neutral, "\nPotential savings: %s in %d group(s); deletion is manual.\n", media.HumanBytes(totalSaving), len(groups))
@@ -284,6 +290,18 @@ func groupSaving(items []item, members []int) int64 {
 		total += items[m].size
 	}
 	return total - items[members[0]].size
+}
+
+// groupBackground returns the smallest known background median among the
+// members, or -1 when none carries one.
+func groupBackground(items []item, members []int) int {
+	bg := -1
+	for _, m := range members {
+		if b := items[m].bg; b >= 0 && (bg == -1 || b < bg) {
+			bg = b
+		}
+	}
+	return bg
 }
 
 // sortMembers orders a group: the suggested keeper (highest resolution,

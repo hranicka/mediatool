@@ -82,6 +82,35 @@ func TestBuildTimingMapTooFewMatches(t *testing.T) {
 	}
 }
 
+func TestPlausibleMap(t *testing.T) {
+	grid := func(span float64) []float64 {
+		return []float64{0, span / 2, span}
+	}
+	// measured anchors: the synthetic-gradient collapse sits at 76%,
+	// real content and PAL-speedup at 96-105%
+	for _, tt := range []struct {
+		span, dubDur float64
+		wantErr      bool
+	}{
+		{15.1, 20, true},  // the testsrc2 collapse (76%)
+		{19.3, 20, false}, // mandelbrot (96%)
+		{20.4, 20, false}, // PAL-ish stretch (102%)
+		{22, 20, false},   // dub missing a scene (110%)
+		{25.5, 20, true},  // stretched beyond belief (127%)
+		{14, 20, true},    // compressed (70%)
+	} {
+		err := plausibleMap(grid(tt.span), tt.dubDur)
+		if (err != nil) != tt.wantErr {
+			t.Errorf("plausibleMap(span %.1f of %.0fs): err %v, wantErr %v", tt.span, tt.dubDur, err, tt.wantErr)
+		}
+	}
+	// a zero-length dub gives a NaN ratio; comparisons on NaN are false,
+	// so the guard must not fire
+	if err := plausibleMap([]float64{0}, 0); err != nil {
+		t.Errorf("zero-length dub must not error: %v", err)
+	}
+}
+
 func TestFindMatchesShiftedCopy(t *testing.T) {
 	ref := hashesOf(0, 40)
 	dub := hashesOf(3, 25) // the same content 3 frames in

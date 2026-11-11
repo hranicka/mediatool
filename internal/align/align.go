@@ -145,11 +145,24 @@ func (t *tool) runAll() error {
 		return fmt.Errorf("no frames extracted (reference %d, dubbed %d)", len(refHashes), len(dubHashes))
 	}
 
+	// self-similarity guard: on synthetic or static content a match is
+	// barely better evidence than chance, however small its distance
+	minFrames := max(1, int(5.0/t.cfg.Interval))
+	bgRef := vhash.BackgroundDistance(refHashes, minFrames, 200)
+	bgDub := vhash.BackgroundDistance(dubHashes, minFrames, 200)
+	bg := minPositive(bgRef, bgDub)
+	if bg >= 0 && bg < vhash.SelfSimilarBits {
+		t.rep.Note(fmt.Sprintf("note: frames are highly self-similar (background median %d of %d bits) - scene matches carry little evidence, verify the timing map carefully", bg, vhash.Side*vhash.Side))
+	}
+
 	// matching + the timing map
 	window := max(50, int(5.0/t.cfg.Interval))
 	matches := findMatches(refHashes, dubHashes, window)
 	czGrid, enGrid, nRel, nOut, err := buildTimingMap(matches, t.cfg.Interval, dubDur, t.cfg.MatchDist)
 	if err != nil {
+		return err
+	}
+	if err := plausibleMap(enGrid, dubDur); err != nil {
 		return err
 	}
 	t.rep.Raw(ui.GoodTone, "Timing map: %d reliable matches, %d outliers dropped\n", nRel, nOut)
@@ -265,4 +278,16 @@ func (t *tool) mux(refInfo *probe.Info, czGrid, enGrid []float64, refDur, dubDur
 func clock(d float64) string {
 	sec := int(d)
 	return fmt.Sprintf("%d:%02d:%02d", sec/3600, sec/60%60, sec%60)
+}
+
+// minPositive returns the smallest non-negative value, or -1 when all are
+// negative (BackgroundDistance's "not enough frames" marker).
+func minPositive(values ...int) int {
+	bg := -1
+	for _, v := range values {
+		if v >= 0 && (bg == -1 || v < bg) {
+			bg = v
+		}
+	}
+	return bg
 }

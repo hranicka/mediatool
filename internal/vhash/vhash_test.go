@@ -61,6 +61,33 @@ func TestFrameHashDifferentContentFarApart(t *testing.T) {
 	}
 }
 
+func TestBackgroundDistance(t *testing.T) {
+	// identical frames: background 0 (self-similar extreme)
+	same := make([][HashLen]byte, 50)
+	if got := BackgroundDistance(same, 5, 200); got != 0 {
+		t.Errorf("identical frames: got %d, want 0", got)
+	}
+	// pseudo-random signatures: background ~half the bits
+	rng := rand.New(rand.NewSource(3))
+	var noise [][HashLen]byte
+	for i := 0; i < 50; i++ {
+		var h [HashLen]byte
+		rng.Read(h[:])
+		noise = append(noise, h)
+	}
+	if got := BackgroundDistance(noise, 5, 200); got < HashLen*8/3 || got > HashLen*8*2/3 {
+		t.Errorf("random signatures: got %d, want within a third around %d", got, HashLen*8/2)
+	}
+	// not enough frames: -1
+	if got := BackgroundDistance(noise[:4], 5, 200); got != -1 {
+		t.Errorf("too few frames: got %d, want -1", got)
+	}
+	// deterministic: two runs agree
+	if BackgroundDistance(noise, 5, 200) != BackgroundDistance(noise, 5, 200) {
+		t.Error("BackgroundDistance must be deterministic")
+	}
+}
+
 func TestMedian(t *testing.T) {
 	if got := median([]float64{3, 1, 2}); got != 2 {
 		t.Errorf("odd count: got %v, want 2", got)

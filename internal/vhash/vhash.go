@@ -11,6 +11,7 @@ package vhash
 import (
 	"fmt"
 	"math/bits"
+	"math/rand"
 	"sort"
 
 	"github.com/hranicka/mediatool/internal/run"
@@ -23,6 +24,11 @@ const (
 	HashLen = Side * Side / 8
 	// FrameLen is one raw grayscale frame as delivered by ffmpeg.
 	FrameLen = Side * Side
+	// SelfSimilarBits is the BackgroundDistance below which a file's frames
+	// count as self-similar: matches then carry little evidence regardless
+	// of their absolute distance. Measured medians: synthetic gradients
+	// (testsrc2) ~68, content-rich animation ~470, real footage ~520.
+	SelfSimilarBits = 150
 )
 
 // Hamming returns the number of differing bits between two signatures.
@@ -124,4 +130,26 @@ func abs(v int) int {
 		return -v
 	}
 	return v
+}
+
+// BackgroundDistance returns the median Hamming distance between sampled
+// signature pairs at least minFrames apart — how strongly the file's own
+// frames differ from one another. Low values mark self-similar content
+// (synthetic patterns, long static scenes) where a hash match is barely
+// better evidence than chance, however small its absolute distance.
+// Returns -1 when there are not enough frames. Deterministic (fixed seed).
+func BackgroundDistance(hashes [][HashLen]byte, minFrames, samples int) int {
+	n := len(hashes)
+	if n < minFrames+2 {
+		return -1
+	}
+	rng := rand.New(rand.NewSource(1))
+	dists := make([]int, 0, samples)
+	for i := 0; i < samples; i++ {
+		j := rng.Intn(n - minFrames)
+		k := j + minFrames + rng.Intn(n-j-minFrames)
+		dists = append(dists, Hamming(hashes[j], hashes[k]))
+	}
+	sort.Ints(dists)
+	return dists[len(dists)/2]
 }

@@ -87,6 +87,21 @@ func buildTimingMap(matches []frameMatch, interval, dubDur float64, matchDist in
 	return czGrid, enGrid, nRel, nOut, nil
 }
 
+// plausibleMap guards against matching noise: the fitted map must cover a
+// plausible fraction of the dub's own duration. Real edits land at 80-125%
+// (PAL speedup ~105%, cut scenes a few percent); synthetic self-similar
+// content collapses the span (measured: 76%) because matches then map
+// noise however small their distance.
+func plausibleMap(enGrid []float64, dubDur float64) error {
+	span := enGrid[len(enGrid)-1] - enGrid[0]
+	ratio := span / dubDur
+	if ratio < 0.8 || ratio > 1.25 {
+		return fmt.Errorf("implausible timing map: the dub's %.0fs map to a %.1fs reference span (%.0f%%, plausible 80-125%%) - the matches likely mapped noise on self-similar content; verify the inputs are the same edit",
+			dubDur, span, ratio*100)
+	}
+	return nil
+}
+
 // polyfit2 fits y = c0 + c1*x + c2*x² by least squares (3x3 normal
 // equations solved by Gaussian elimination).
 func polyfit2(xs, ys []float64) [3]float64 {
