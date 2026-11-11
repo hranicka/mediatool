@@ -12,22 +12,29 @@ const sampleRate = 48000
 
 // dubFrames streams raw s16le stereo frames with forward-only access: the
 // timing map is monotonic, so resampling only ever advances through the
-// dub (Python's whole-file numpy load, minus the gigabytes of RAM).
+// dub (Python's whole-file numpy load, minus the gigabytes of RAM). The
+// two-frame cache serves map stretches (local slope < 1, e.g. a PAL-speedup
+// dub aligned onto a slower reference), where consecutive output samples
+// interpolate around the same dub index.
 type dubFrames struct {
 	br   *bufio.Reader
 	pos  int64    // index of the next frame to read
-	last [2]int16 // frame pos-1, kept for interpolating exactly there
-	init bool     // whether last holds a real frame
+	prev [2]int16 // frame pos-2
+	last [2]int16 // frame pos-1
+	init int      // how many of prev/last are valid: 0, 1 (last) or 2
 }
 
 // frame returns the dub frame at index i; ok is false past the dub's end
 // (those ranges stay silent, like the numpy zero-padding).
 func (d *dubFrames) frame(i int64) ([2]int16, bool) {
-	if i < d.pos-1 {
-		// cannot happen: interp1 over the monotonic map only moves forward
+	if i < d.pos-2 {
+		// cannot happen: interp1 over the monotonic map never rewinds
 		return [2]int16{}, false
 	}
-	if i == d.pos-1 && d.init {
+	if i == d.pos-2 && d.init >= 2 {
+		return d.prev, true
+	}
+	if i == d.pos-1 && d.init >= 1 {
 		return d.last, true
 	}
 	for skip := i - d.pos; skip > 0; skip-- {
@@ -47,7 +54,10 @@ func (d *dubFrames) read() ([2]int16, bool) {
 		int16(binary.LittleEndian.Uint16(b[0:2])),
 		int16(binary.LittleEndian.Uint16(b[2:4])),
 	}
-	d.last, d.init = f, true
+	d.prev, d.last = d.last, f
+	if d.init < 2 {
+		d.init++
+	}
 	d.pos++
 	return f, true
 }
