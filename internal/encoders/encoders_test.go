@@ -44,11 +44,11 @@ func TestQualityArgs(t *testing.T) {
 		kind  Kind
 		want  []string
 	}{
-		{CodecHEVC, NVENC, []string{"-c:v", "hevc_nvenc", "-preset", "p5", "-tune", "hq", "-rc", "vbr", "-cq", "26", "-b:v", "0", "-spatial-aq", "1"}},
+		{CodecHEVC, NVENC, []string{"-c:v", "hevc_nvenc", "-preset", "p5", "-tune", "hq", "-rc", "vbr", "-cq", "26", "-b:v", "0", "-spatial-aq", "1", "-temporal-aq", "1", "-rc-lookahead", "32", "-multipass", "2"}},
 		{CodecHEVC, QSV, []string{"-c:v", "hevc_qsv", "-preset", "medium", "-global_quality", "26"}},
 		{CodecHEVC, VAAPI, []string{"-c:v", "hevc_vaapi", "-rc_mode", "CQP", "-qp", "26"}},
 		{CodecHEVC, SW, []string{"-c:v", "libx265", "-preset", "medium", "-crf", "26"}},
-		{CodecAV1, NVENC, []string{"-c:v", "av1_nvenc", "-preset", "p5", "-tune", "hq", "-rc", "vbr", "-cq", "26", "-b:v", "0", "-spatial-aq", "1"}},
+		{CodecAV1, NVENC, []string{"-c:v", "av1_nvenc", "-preset", "p5", "-tune", "hq", "-rc", "vbr", "-cq", "26", "-b:v", "0", "-spatial-aq", "1", "-temporal-aq", "1", "-rc-lookahead", "32", "-multipass", "2"}},
 		{CodecAV1, QSV, []string{"-c:v", "av1_qsv", "-preset", "medium", "-global_quality", "26"}},
 		{CodecAV1, VAAPI, []string{"-c:v", "av1_vaapi", "-rc_mode", "CQP", "-qp", "26"}},
 		{CodecAV1, SW, []string{"-c:v", "libsvtav1", "-preset", "8", "-crf", "26"}},
@@ -69,7 +69,7 @@ func TestQualityArgs(t *testing.T) {
 func TestCappedArgs(t *testing.T) {
 	// source 2000 kbps: camera targets 1100, caps at 1300
 	nvenc := Encoder{Codec: CodecHEVC, Kind: NVENC}
-	want := []string{"-c:v", "hevc_nvenc", "-preset", "p5", "-tune", "hq", "-rc", "vbr", "-cq", "28", "-b:v", "0", "-spatial-aq", "1", "-maxrate", "1300k", "-bufsize", "2600k"}
+	want := []string{"-c:v", "hevc_nvenc", "-preset", "p5", "-tune", "hq", "-rc", "vbr", "-cq", "28", "-b:v", "0", "-spatial-aq", "1", "-temporal-aq", "1", "-rc-lookahead", "32", "-multipass", "2", "-maxrate", "1300k", "-bufsize", "2600k"}
 	if got := nvenc.VideoArgs(ModeCamera, 28, 2000); !reflect.DeepEqual(got, want) {
 		t.Errorf("nvenc camera: got %v, want %v", got, want)
 	}
@@ -95,7 +95,7 @@ func TestCappedArgs(t *testing.T) {
 
 	// av1 variants keep the same cap math
 	av1NVENC := Encoder{Codec: CodecAV1, Kind: NVENC}
-	want = []string{"-c:v", "av1_nvenc", "-preset", "p5", "-tune", "hq", "-rc", "vbr", "-cq", "28", "-b:v", "0", "-spatial-aq", "1", "-maxrate", "1300k", "-bufsize", "2600k"}
+	want = []string{"-c:v", "av1_nvenc", "-preset", "p5", "-tune", "hq", "-rc", "vbr", "-cq", "28", "-b:v", "0", "-spatial-aq", "1", "-temporal-aq", "1", "-rc-lookahead", "32", "-multipass", "2", "-maxrate", "1300k", "-bufsize", "2600k"}
 	if got := av1NVENC.VideoArgs(ModeCamera, 28, 2000); !reflect.DeepEqual(got, want) {
 		t.Errorf("av1 nvenc camera: got %v, want %v", got, want)
 	}

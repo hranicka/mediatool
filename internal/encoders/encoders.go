@@ -218,8 +218,9 @@ func (e Encoder) qualityArgs(cq int) []string {
 	cqStr := fmt.Sprint(cq)
 	switch e.Kind {
 	case NVENC:
-		// av1_nvenc shares the hevc_nvenc option set
-		return []string{"-c:v", e.name(), "-preset", "p5", "-tune", "hq", "-rc", "vbr", "-cq", cqStr, "-b:v", "0", "-spatial-aq", "1"}
+		// av1_nvenc shares the hevc_nvenc option set; temporal-AQ + lookahead
+		// + fullres multipass spend bits better on motion and grain
+		return []string{"-c:v", e.name(), "-preset", "p5", "-tune", "hq", "-rc", "vbr", "-cq", cqStr, "-b:v", "0", "-spatial-aq", "1", "-temporal-aq", "1", "-rc-lookahead", "32", "-multipass", "2"}
 	case QSV:
 		return []string{"-c:v", e.name(), "-preset", "medium", "-global_quality", cqStr}
 	case VAAPI:
