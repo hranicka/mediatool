@@ -190,7 +190,9 @@ func Run(args []string) error {
 	}
 
 	var candidates []encoders.Kind
-	rep := ui.New(os.Stdout, ui.Detect(os.Stdout, os.Stderr))
+	prof := ui.Detect(os.Stdout, os.Stderr)
+	prof.Verbose = cfg.Verbose
+	rep := ui.New(os.Stdout, prof)
 	if cfg.Enc == "auto" {
 		candidates = encoders.Candidates(cfg.Codec)
 	} else {

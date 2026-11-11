@@ -15,6 +15,7 @@ type Profile struct {
 	Color       bool // ANSI color codes allowed
 	UTF8        bool // unicode glyphs allowed
 	Width       int  // terminal width in columns (80 when unknown)
+	Verbose     bool // show every skip/OK line; otherwise they collapse to one live line
 }
 
 // Detect inspects the output streams and the environment. NO_COLOR,

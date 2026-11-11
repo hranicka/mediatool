@@ -26,6 +26,7 @@ import (
 type Config struct {
 	Dir     string
 	Ignores []string
+	Verbose bool
 }
 
 type tool struct {
@@ -51,6 +52,7 @@ func Run(args []string) error {
 	if verbose {
 		slog.SetLogLoggerLevel(slog.LevelDebug)
 	}
+	cfg.Verbose = verbose
 	if fs.NArg() != 1 {
 		fmt.Fprintln(os.Stderr, "usage: mediatool dup [flags] <directory>")
 		return fmt.Errorf("dup needs exactly one directory argument")
@@ -67,7 +69,9 @@ func Run(args []string) error {
 	}
 
 	ignores, warnings := ignore.Load(dir, "dup", cfg.Ignores)
-	rep := ui.New(os.Stdout, ui.Detect(os.Stdout, os.Stderr))
+	prof := ui.Detect(os.Stdout, os.Stderr)
+	prof.Verbose = cfg.Verbose
+	rep := ui.New(os.Stdout, prof)
 	for _, w := range warnings {
 		rep.Raw(ui.WarnTone, "warning: %s\n", w)
 	}

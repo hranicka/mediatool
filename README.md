@@ -169,19 +169,24 @@ the search starts at the file's directory), so an ignore file in `/foo` or
 ## Output & colors
 
 When stdout and stderr are both terminals, the output renders for humans:
-a settings header, one line per file with a status symbol (green ✓
-processed, dim – skipped, red ✗ failed, yellow ⚠ notices), `[i/n]`
-position markers, a per-file progress bar driven by ffmpeg's own
-`time=`/`speed=` stats (convert, clean, ac3, enhance), failure lines with
-the captured ffmpeg error tail, and a closing summary with size
-aggregates, the failure list and elapsed time. The enhance engine
-download shows a byte progress bar.
+a settings header, a line per processed file with a status symbol (green ✓
+processed, red ✗ failed, yellow ⚠ notices), `[i/n]` position markers, a
+per-file progress bar driven by ffmpeg's own `time=`/`speed=` stats
+(convert, clean, ac3, enhance), failure lines with the captured ffmpeg
+error tail, and a closing summary with size aggregates, the failure list
+and elapsed time. The enhance engine download shows a byte progress bar.
+
+By default only files that are (or would be) processed get a permanent
+line; skipped/untouched files collapse into a single dim "walking" line
+that rewrites in place (`– [i/n] path — reason`) so you can see the run
+moving through the library without a scroll of gray skips. `-v` shows
+every skip/OK line permanently and swaps the progress bar for ffmpeg's
+raw stats passthrough.
 
 Piped or redirected output stays plain — line-for-line identical to the
 earlier releases — so scripts and greps keep working. Color control
 follows the usual conventions: `NO_COLOR` disables colors, `CLICOLOR_FORCE=1`
-forces them, `TERM=dumb` disables them. `-v` swaps the progress bar for
-ffmpeg's raw stats passthrough.
+forces them, `TERM=dumb` disables them.
 
 ## Requirements
 

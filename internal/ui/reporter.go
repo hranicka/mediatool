@@ -61,10 +61,11 @@ func New(out io.Writer, p Profile) *Reporter {
 // Interactive reports whether the pretty rendering applies.
 func (r *Reporter) Interactive() bool { return r.p.Interactive }
 
-// close terminates an active progress line before any other output.
+// close erases an active live line (progress bar or quiet walking line)
+// before any other output, so transient lines never litter the scrollback.
 func (r *Reporter) close() {
 	if r.live {
-		fmt.Fprint(r.out, "\n")
+		fmt.Fprint(r.out, "\r\x1b[K")
 		r.live = false
 	}
 }
@@ -143,6 +144,12 @@ func (r *Reporter) Skip(i, n int, path, reason string) {
 		return
 	}
 	line := fmt.Sprintf("%s %s%s %s %s", r.sym.Skip, idx(i, n), path, r.dash(), reason)
+	if !r.p.Verbose {
+		// quiet: rewrite one live "walking" line per file instead of a
+		// scroll of skips, so progress stays visible without the noise
+		r.status(r.pal.Dim(truncate(line, r.p.Width, r.p.UTF8)))
+		return
+	}
 	fmt.Fprintln(r.out, r.pal.Dim(line))
 }
 
@@ -178,6 +185,10 @@ func (r *Reporter) OK(i, n int, path, msg string) {
 		return
 	}
 	line := fmt.Sprintf("%s %s%s %s %s", r.sym.Skip, idx(i, n), path, r.dash(), msg)
+	if !r.p.Verbose {
+		r.status(r.pal.Dim(truncate(line, r.p.Width, r.p.UTF8)))
+		return
+	}
 	fmt.Fprintln(r.out, r.pal.Dim(line))
 }
 

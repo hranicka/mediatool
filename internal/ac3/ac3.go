@@ -93,7 +93,9 @@ func Run(args []string) error {
 	}
 
 	ignores, warnings := ignore.Load(cli.IgnoresDir(target), "ac3", cfg.Ignores)
-	rep := ui.New(os.Stdout, ui.Detect(os.Stdout, os.Stderr))
+	prof := ui.Detect(os.Stdout, os.Stderr)
+	prof.Verbose = cfg.Verbose
+	rep := ui.New(os.Stdout, prof)
 	for _, w := range warnings {
 		rep.Raw(ui.WarnTone, "warning: %s\n", w)
 	}

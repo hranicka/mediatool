@@ -15,8 +15,15 @@ func plain() (*Reporter, *bytes.Buffer) {
 	return New(&buf, Profile{}), &buf
 }
 
-// pretty exercises the reporter the way interactive terminal runs do.
+// pretty exercises the verbose interactive rendering (every line shown).
 func pretty() (*Reporter, *bytes.Buffer) {
+	var buf bytes.Buffer
+	return New(&buf, Profile{Interactive: true, Color: true, UTF8: true, Width: 100, Verbose: true}), &buf
+}
+
+// quiet exercises the default interactive rendering: skips collapse to a
+// single live walking line.
+func quiet() (*Reporter, *bytes.Buffer) {
 	var buf bytes.Buffer
 	return New(&buf, Profile{Interactive: true, Color: true, UTF8: true, Width: 100}), &buf
 }
@@ -159,6 +166,42 @@ func TestPrettyEvents(t *testing.T) {
 	got = stripANSI(buf.String())
 	if !strings.Contains(got, "✗ failed to convert /e.mkv (left untouched)") || !strings.Contains(got, "└─ Invalid data found") {
 		t.Errorf("pretty fail = %q", got)
+	}
+}
+
+// TestQuietWalkingLine pins the default interactive behavior: a skip is a
+// single in-place line (no newline), the next real event erases it, and
+// verbose brings the full permanent line back.
+func TestQuietWalkingLine(t *testing.T) {
+	rep, buf := quiet()
+	rep.Skip(2, 42, "/a.mkv", "already hevc")
+	got := buf.String()
+	if !strings.HasPrefix(got, "\r\x1b[K") || strings.HasSuffix(got, "\n") {
+		t.Errorf("quiet skip must rewrite in place without a newline: %q", got)
+	}
+	if !strings.Contains(stripANSI(got), "– [2/42] /a.mkv — already hevc") {
+		t.Errorf("quiet skip content: %q", got)
+	}
+
+	// a following real event erases the walking line rather than leaving it
+	buf.Reset()
+	rep.Start("Processing", 3, 42, "/b.mkv", "1.0M", 0)
+	if !strings.HasPrefix(buf.String(), "\r\x1b[K") {
+		t.Errorf("start must erase the walking line: %q", buf.String())
+	}
+
+	// OK collapses the same way
+	rep, buf = quiet()
+	rep.OK(1, 3, "/c.mkv", "nothing to remove")
+	if got := buf.String(); !strings.HasPrefix(got, "\r\x1b[K") || strings.HasSuffix(got, "\n") {
+		t.Errorf("quiet OK must rewrite in place: %q", got)
+	}
+
+	// verbose shows the full permanent line again
+	rep, buf = pretty()
+	rep.Skip(2, 42, "/a.mkv", "already hevc")
+	if got := buf.String(); got != "\x1b[2m– [2/42] /a.mkv — already hevc\x1b[0m\n" {
+		t.Errorf("verbose skip = %q", got)
 	}
 }
 

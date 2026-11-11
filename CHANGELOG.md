@@ -15,6 +15,18 @@
   `-v` keeps the raw ffmpeg stats passthrough instead of the bar.
 - Interrupting a run (Ctrl-C) prints `interrupted; cleaning up temp
   files` before exiting 130 instead of dying silently.
+- **Quieter interactive output** — skipped/untouched files no longer
+  scroll a gray line each; they collapse into one dim "walking" line
+  rewritten in place (`– [i/n] path — reason`) so progress stays visible
+  without the noise. Only processed (or would-be-processed) files get a
+  permanent line. `-v` restores every skip/OK line. Plain output is
+  unchanged.
+- **Fixed: language whitelist dropped full-word tags** — files tagged
+  with the language name (`English`, `Czech`) instead of the ISO code
+  (`eng`, `cze`) failed the `cs,en` whitelist and had those tracks
+  removed by `clean` (and `convert -l`). Language names now normalize to
+  their codes on both the tag and whitelist sides, so both spellings
+  match.
 
 ## 2.0.1
 
