@@ -55,10 +55,11 @@
 - **Higher-quality NVENC encoding** — the NVENC quality block now adds
   temporal AQ, 32-frame lookahead and fullres multipass, spending bits
   better on motion and grain at the same CQ (HEVC and AV1).
-- **New `hq` preset** — `convert -p hq` targets CQ 20 while keeping the
-  source resolution and HDR (audio copy), for action/grainy film or
-  near-transparent 1080p/4K HDR. `movie` (CQ 26) stays the compaction
-  default; any preset is overridable with `-q`.
+- **movie preset default quality raised to CQ 22** (from 26) — a
+  quality-leaning default that still compacts well, keeping the source
+  resolution and HDR (audio copy). Override with `-q` (`-q 18` for
+  action/grainy film or near-transparent 1080p/4K HDR, `-q 26` for smaller
+  files).
 
 ## 2.0.1
 

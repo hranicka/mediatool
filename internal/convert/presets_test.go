@@ -30,12 +30,12 @@ func TestLookupPreset(t *testing.T) {
 	if p.Mode != encoders.ModeCamera || p.Audio != "aac:128k" || p.Tonemap || p.ScaleHeight != 0 {
 		t.Errorf("camera preset mismatch: %+v", p)
 	}
-	p, err = Lookup("hq")
+	p, err = Lookup("movie")
 	if err != nil {
-		t.Fatalf("Lookup(hq): %v", err)
+		t.Fatalf("Lookup(movie): %v", err)
 	}
-	if p.Mode != encoders.ModeMovie || p.CQ != 20 || p.Tonemap || p.ScaleHeight != 0 || p.Audio != "" {
-		t.Errorf("hq preset mismatch: %+v", p)
+	if p.Mode != encoders.ModeMovie || p.CQ != 22 || p.Tonemap || p.ScaleHeight != 0 || p.Audio != "" {
+		t.Errorf("movie preset mismatch: %+v", p)
 	}
 	if _, err := Lookup("bogus"); err == nil || !strings.Contains(err.Error(), "movie") {
 		t.Errorf("unknown preset must list the names: %v", err)

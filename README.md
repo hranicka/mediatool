@@ -20,7 +20,7 @@ make build      # dist/mediatool
 
 | Command | Purpose |
 |---|---|
-| `convert` | re-encode video to HEVC/AV1 via presets (movie, hq, tv, tablet, camera, lowq, chromecast) |
+| `convert` | re-encode video to HEVC/AV1 via presets (movie, tv, tablet, camera, lowq, chromecast) |
 | `clean` | remove audio/subtitle tracks of non-whitelisted languages (default: cs + en) |
 | `ac3` | append AC3 640k compatibility tracks for DTS/TrueHD/FLAC audio |
 | `dup` | report duplicate audio tracks (read-only) |
@@ -32,7 +32,7 @@ Run `mediatool <command> -h` for the full flag list of each command.
 ### convert
 
 ```
-mediatool convert [-p movie|hq|tv|tablet|camera|lowq|chromecast]
+mediatool convert [-p movie|tv|tablet|camera|lowq|chromecast]
                   [-c hevc|av1] [-e auto|nvenc|qsv|vaapi|sw] [-q cq] [-r height]
                   [-a copy|aac[:bitrate[:channels]]|ac3[:bitrate]] [-tonemap]
                   [-vaapi_device dev] [-i list] [-f] [-n] <dir|file>
@@ -43,20 +43,19 @@ an explicitly passed flag (`-p tablet -r 1080p -q 28 -a copy`):
 
 | preset | quality | scale | HDR | audio |
 |---|---|---|---|---|
-| `movie` (default) | CQ 26 quality target | – | kept | copy |
-| `hq` | CQ 20 quality target | – | kept | copy |
+| `movie` (default) | CQ 22 quality target | – | kept | copy |
 | `tv` | CQ 26 | 1080p | → SDR | AC3 compat appended |
 | `tablet` | CQ 33 | 720p | → SDR | AAC 192k stereo |
 | `camera` | CQ 28, capped at ~65 % of the source bitrate | – | – | AAC 128k |
 | `lowq` | CQ 31, capped at ~50 % | – | – | copy |
 | `chromecast` | CQ 22, 15M cap, level 4.1, written as a new `*_CC4_FIXED.mkv` (originals untouched) | – | – | copy |
 
-Lower CQ means higher quality (and bigger files). `movie` (CQ 26) is a
-compaction default — good for drama and clean sources; use `hq` (CQ 20) or
-`-q 20` for action, grainy film, or near-transparent 1080p/4K HDR. `movie`
-and `hq` keep the source resolution and HDR. NVENC encodes use spatial +
-temporal AQ, 32-frame lookahead and fullres multipass to spend bits better
-on motion and grain.
+Lower CQ means higher quality (and bigger files). `movie` defaults to
+CQ 22 — a quality-leaning target that still compacts well; override with
+`-q` (`-q 18` for action, grainy film or near-transparent 1080p/4K HDR,
+`-q 26` for smaller files). `movie` keeps the source resolution and HDR.
+NVENC encodes use spatial + temporal AQ, 32-frame lookahead and fullres
+multipass to spend bits better on motion and grain.
 
 - `-c av1` targets AV1 instead of HEVC (hardware `av1_nvenc`/`av1_qsv`/
   `av1_vaapi` where available, `libsvtav1` software fallback); HEVC stays

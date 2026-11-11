@@ -122,7 +122,7 @@ func Run(args []string) error {
 	var cfg Config
 	var presetName, scaleArg, codec, audioSpec, langArg string
 	var verbose bool
-	fs.StringVar(&presetName, "p", "movie", "preset: movie (default), hq, tv, tablet, camera, lowq, chromecast")
+	fs.StringVar(&presetName, "p", "movie", "preset: movie (default), tv, tablet, camera, lowq, chromecast")
 	fs.StringVar(&codec, "c", string(encoders.CodecHEVC), "output codec: hevc (default) or av1")
 	fs.StringVar(&cfg.Enc, "e", "auto", "encoder: auto (probe), nvenc, qsv, vaapi, sw")
 	fs.IntVar(&cfg.CQ, "q", 0, "CQ/CRF value (defaults: movie/tv 26, camera 28, lowq 31, chromecast 22, tablet 33)")

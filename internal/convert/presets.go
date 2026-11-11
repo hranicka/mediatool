@@ -24,10 +24,9 @@ type Preset struct {
 }
 
 var presets = map[string]Preset{
-	// library default: keep HDR, keep all audio as-is
-	"movie": {Mode: encoders.ModeMovie},
-	// high-quality master: keep resolution + HDR, lower CQ for action/grain
-	"hq": {Mode: encoders.ModeMovie, CQ: 20},
+	// library default: keep resolution + HDR, keep all audio as-is. CQ 22
+	// leans quality; override with -q (e.g. -q 18 higher, -q 26 smaller).
+	"movie": {Mode: encoders.ModeMovie, CQ: 22},
 	// living-room 1080p SDR copy with compatibility audio
 	"tv": {Mode: encoders.ModeMovie, ScaleHeight: 1080, Tonemap: true, Audio: "ac3"},
 	// small player files: 720p SDR, stereo AAC (heir of hevc-tablet-*.sh)
@@ -71,7 +70,7 @@ func applyPreset(p Preset, set map[string]bool, cfg *Config, scaleArg, audioSpec
 }
 
 func presetNames() []string {
-	return []string{"movie", "hq", "tv", "tablet", "camera", "lowq", "chromecast"}
+	return []string{"movie", "tv", "tablet", "camera", "lowq", "chromecast"}
 }
 
 // audioTarget describes what happens to a converted file's audio streams.
