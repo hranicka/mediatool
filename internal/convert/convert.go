@@ -301,6 +301,23 @@ func needsGenpts(path string) bool {
 	return false
 }
 
+// onlyVideoAudio reports whether every stream is video or audio — i.e.
+// nothing (subtitles, teletext/data, attachments) that MP4 cannot carry
+// would be lost by muxing to MP4 instead of MKV.
+func onlyVideoAudio(info *probe.Info) bool {
+	for _, s := range info.Streams {
+		if s.CodecType != probe.TypeVideo && s.CodecType != probe.TypeAudio {
+			return false
+		}
+	}
+	return true
+}
+
+// withExt replaces path's extension with ext (e.g. part1.ts -> part1.mkv).
+func withExt(path, ext string) string {
+	return strings.TrimSuffix(path, filepath.Ext(path)) + ext
+}
+
 func (t *tool) runAll() error {
 	cfg := t.cfg
 	cqNote := ""
@@ -467,14 +484,27 @@ func (t *tool) processFile(i, n int, path string) {
 		if !convertibleSource(v.CodecName) {
 			t.rep.Notice(i, n, path, fmt.Sprintf("Forcing re-encode of %s source", v.CodecName))
 		}
-		outPath = path
-		// container rule: MKV stays MKV, every other source (mp4 and the
-		// camera formats) muxes to MP4 (hevc-convert.sh parity)
-		if strings.EqualFold(filepath.Ext(path), ".mkv") {
+		// container rule: MKV stays MKV; other sources mux to MP4 only when
+		// they carry nothing MP4 would lose (video+audio only), otherwise to
+		// MKV to preserve subtitles/teletext/attachments. The output extension
+		// follows the container; the original is kept as <source>.old.
+		switch {
+		case strings.EqualFold(filepath.Ext(path), ".mkv"):
 			outFmt = "matroska"
-		} else {
+			outPath = path
+		case onlyVideoAudio(info):
 			outFmt = "mp4"
 			muxArgs = []string{"-movflags", "+use_metadata_tags+faststart"}
+			outPath = withExt(path, ".mp4")
+		default:
+			outFmt = "matroska"
+			outPath = withExt(path, ".mkv")
+		}
+		if outPath != path {
+			if _, err := os.Stat(outPath); err == nil {
+				t.skip(i, n, path, fmt.Sprintf("output %s already exists", outPath))
+				return
+			}
 		}
 	}
 
@@ -522,7 +552,11 @@ func (t *tool) processFile(i, n int, path string) {
 		if cfg.Mode == encoders.ModeChromecast {
 			t.rep.Would("Would create", i, n, outPath, fmt.Sprintf("source %s%s", media.HumanBytes(srcSize), scaleSuffix(scaleInfo)), cleanupLines...)
 		} else {
-			t.rep.Would("Would convert", i, n, path, fmt.Sprintf("%s, %s%s", media.HumanBytes(srcSize), plan, scaleSuffix(scaleInfo)), cleanupLines...)
+			details := cleanupLines
+			if outPath != path {
+				details = append([]string{"output: " + outPath}, details...)
+			}
+			t.rep.Would("Would convert", i, n, path, fmt.Sprintf("%s, %s%s", media.HumanBytes(srcSize), plan, scaleSuffix(scaleInfo)), details...)
 		}
 		t.converted++
 		return
@@ -535,6 +569,9 @@ func (t *tool) processFile(i, n int, path string) {
 
 	details := []string{fmt.Sprintf("plan: %s%s", plan, scaleSuffix(scaleInfo))}
 	details = append(details, cleanupLines...)
+	if outPath != path {
+		details = append(details, "output: "+outPath)
+	}
 	switch v.ColorTransfer {
 	case "smpte2084":
 		if tonemapped {
@@ -640,7 +677,7 @@ func (t *tool) processFile(i, n int, path string) {
 		return
 	}
 
-	t.verifyAndSwap(i, n, path, tmp, info, srcSize, gate, time.Since(fileStart))
+	t.verifyAndSwap(i, n, path, outPath, tmp, info, srcSize, gate, time.Since(fileStart))
 }
 
 func scaleSuffix(scaleInfo string) string {
@@ -887,8 +924,9 @@ func sourceVideoKbps(v probe.Stream, info *probe.Info, srcSize int64) int {
 }
 
 // verifyAndSwap applies the safety gates and swaps the file in place with a
-// .old backup.
-func (t *tool) verifyAndSwap(i, n int, path, tmp string, info *probe.Info, srcSize int64, gate streamGate, took time.Duration) {
+// .old backup. outPath is the final name (it differs from path when the
+// output container changes the extension); the backup keeps the source name.
+func (t *tool) verifyAndSwap(i, n int, path, outPath, tmp string, info *probe.Info, srcSize int64, gate streamGate, took time.Duration) {
 	srcDur, srcOK := info.Duration()
 	tmpInfo, err := probe.Probe(t.r, t.ffprobeBin, tmp)
 	if err != nil {
@@ -926,15 +964,15 @@ func (t *tool) verifyAndSwap(i, n int, path, tmp string, info *probe.Info, srcSi
 		return
 	}
 
-	if _, err := backup.Swap(path, tmp); err != nil {
+	if _, err := backup.SwapTo(path, tmp, outPath); err != nil {
 		t.fail(path, err.Error(), "")
 		return
 	}
 	// hevc-convert.sh parity: the replacement keeps the source's mtime
 	if old, err := os.Stat(path + ".old"); err == nil {
-		os.Chtimes(path, old.ModTime(), old.ModTime())
+		os.Chtimes(outPath, old.ModTime(), old.ModTime())
 	}
-	t.rep.Success("Converted", path, srcSize, st.Size(), path+".old", took)
+	t.rep.Success("Converted", outPath, srcSize, st.Size(), path+".old", took)
 	t.bytesIn += srcSize
 	t.bytesOut += st.Size()
 	t.converted++

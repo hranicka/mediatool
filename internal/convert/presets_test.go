@@ -400,6 +400,104 @@ func TestConvertMTSOutput(t *testing.T) {
 	}
 }
 
+func TestConvertTSWithSubsToMKV(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "part1.ts")
+	writeFile(t, src, 1_000_000)
+
+	// video+audio+subtitle: MP4 would lose the subtitle, so the output is
+	// MKV and the file is renamed part1.ts -> part1.mkv (original .old)
+	ff := &fakeFF{probeFor: func(src string) (string, bool) {
+		if strings.HasSuffix(filepath.Base(src), ".tmp") {
+			return tmpJSON(600.0, aacAudio, subCS), true
+		}
+		return withAudio(withAudio(h264JSON, aacAudio), subCS), true
+	}, encSize: 500_000}
+	out := &bytes.Buffer{}
+	tl := newTestTool(t, dir, ff, &Config{Dir: dir, Mode: encoders.ModeMovie, CQ: 26}, out)
+	tl.processFile(1, 1, src)
+
+	if tl.converted != 1 || tl.failed != 0 {
+		t.Fatalf("counters: %+v (out: %s)", tl, out.String())
+	}
+	dst := filepath.Join(dir, "part1.mkv")
+	if string(read(t, dst))[:10] != "xxxxxxxxxx" {
+		t.Error("part1.mkv must hold the converted content")
+	}
+	if string(read(t, src+".old"))[:10] != "oooooooooo" {
+		t.Error("part1.ts.old must hold the original content")
+	}
+	if _, err := os.Stat(src); err == nil {
+		t.Error("the original part1.ts must be renamed away")
+	}
+	args := firstEncode(t, ff)
+	if !hasPair(args, "-f", "matroska") || hasArg(args, "-movflags") {
+		t.Errorf("subtitle source must mux to matroska: %v", args)
+	}
+	if !strings.Contains(out.String(), "output: "+dst) {
+		t.Errorf("rename must be reported: %s", out.String())
+	}
+}
+
+func TestConvertTSVideoOnlyToMP4(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "cam.ts")
+	writeFile(t, src, 1_000_000)
+
+	// video-only: nothing to lose, so MP4 (renamed cam.ts -> cam.mp4)
+	ff := &fakeFF{probeFor: jsonFor(600.0), encSize: 500_000}
+	tl := newTestTool(t, dir, ff, &Config{Dir: dir, Mode: encoders.ModeMovie, CQ: 26}, &bytes.Buffer{})
+	tl.processFile(1, 1, src)
+
+	if tl.converted != 1 {
+		t.Fatalf("converted: %+v", tl)
+	}
+	dst := filepath.Join(dir, "cam.mp4")
+	if string(read(t, dst))[:10] != "xxxxxxxxxx" {
+		t.Error("cam.mp4 must hold the converted content")
+	}
+	if string(read(t, src+".old"))[:10] != "oooooooooo" {
+		t.Error("cam.ts.old must hold the original content")
+	}
+	if _, err := os.Stat(src); err == nil {
+		t.Error("the original cam.ts must be renamed away")
+	}
+	args := firstEncode(t, ff)
+	if !hasPair(args, "-f", "mp4") || !hasPair(args, "-movflags", "+use_metadata_tags+faststart") {
+		t.Errorf("video-only source must mux to mp4: %v", args)
+	}
+}
+
+func TestConvertMP4WithSubsToMKV(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "clip.mp4")
+	writeFile(t, src, 1_000_000)
+
+	// the rule is uniform: an mp4 carrying subtitles also goes to MKV
+	ff := &fakeFF{probeFor: func(src string) (string, bool) {
+		if strings.HasSuffix(filepath.Base(src), ".tmp") {
+			return tmpJSON(600.0, aacAudio, subCS), true
+		}
+		return withAudio(withAudio(h264JSON, aacAudio), subCS), true
+	}, encSize: 500_000}
+	tl := newTestTool(t, dir, ff, &Config{Dir: dir, Mode: encoders.ModeMovie, CQ: 26}, &bytes.Buffer{})
+	tl.processFile(1, 1, src)
+
+	if tl.converted != 1 {
+		t.Fatalf("converted: %+v", tl)
+	}
+	dst := filepath.Join(dir, "clip.mkv")
+	if string(read(t, dst))[:10] != "xxxxxxxxxx" {
+		t.Error("clip.mkv must hold the converted content")
+	}
+	if _, err := os.Stat(src); err == nil {
+		t.Error("the original clip.mp4 must be renamed away")
+	}
+	if !hasPair(firstEncode(t, ff), "-f", "matroska") {
+		t.Errorf("mp4 with subtitles must mux to matroska: %v", firstEncode(t, ff))
+	}
+}
+
 func TestConvertMtimePreserved(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "movie.mkv")
