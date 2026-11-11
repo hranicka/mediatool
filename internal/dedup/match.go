@@ -20,6 +20,9 @@ func durationCompatible(d1, d2, tolPct float64) bool {
 // framerate drift stay covered (the align_audio.py find_matches scheme).
 // Returns the fraction of driver frames with a reliable match (hamming
 // distance <= maxBits); bails out early when min-match is unreachable.
+// The bail keeps the >= min-match decision exact, but the returned value
+// itself can sit lower than a full walk would yield (the walk may recover
+// later frames) - only compare it against minMatch.
 func matchFraction(a, b [][vhash.HashLen]byte, window, maxBits int, minMatch float64) float64 {
 	if len(a) == 0 || len(b) == 0 {
 		return 0

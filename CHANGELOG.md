@@ -30,6 +30,20 @@
   subtitles. `-n` prints the timing map (endpoints and 10 sample offsets)
   without muxing. The frame hashing is shared with dedup via the new
   `internal/vhash` package.
+- **Robustness hardening for align/dedup** (found by a code review plus
+  measured hash-distance distributions): the align resampler no longer
+  drops the `s0` interpolation term on stretched maps — a PAL-speedup dub
+  buzzed at ~4% of all samples before; align refuses implausible timing
+  maps (reference span outside 80–125% of the dub duration) and warns
+  when frames are highly self-similar (synthetic gradients measure ~68
+  background bits vs ~470–520 for real content, so matches there map
+  noise however small their distance); dedup annotates such groups,
+  notes files without a container duration (they pair with everything),
+  re-checks duration compatibility during pairing, orders groups
+  deterministically and validates its numeric flags; align validates its
+  flags, requires usable durations and reference audio up front (both
+  before any decoding), and notes attachment streams the mux does not
+  copy. READMEs state the ±window bound on shifted starts.
 - **Clearer convert settings header** — the run header now spells out the
   full effective plan, defaults included, so a run is self-describing: a
   dedicated `Quality` line names the strategy (quality target, the

@@ -75,6 +75,54 @@ func TestMatchFractionShiftedBeyondWindow(t *testing.T) {
 	}
 }
 
+// fullWalk is matchFraction without the early bail-out. The bail returns
+// its running count, which a recovering full walk can still exceed - but
+// whenever it fires, even matching every remaining frame stays below the
+// threshold, so the >= min-match decision must be identical either way.
+// That decision equivalence is the property under test.
+func fullWalk(a, b [][vhash.HashLen]byte, window, maxBits int, minMatch float64) float64 {
+	if len(a) == 0 || len(b) == 0 {
+		return 0
+	}
+	if len(b) < len(a) {
+		a, b = b, a
+	}
+	prev := 0
+	matched := 0
+	for j := range a {
+		lo := max(0, prev-window)
+		hi := min(len(b), prev+window+1)
+		best, bestDist := vhash.WindowBest(a, b, j, lo, hi, prev+1)
+		if bestDist <= maxBits {
+			matched++
+		}
+		prev = best
+	}
+	return float64(matched) / float64(len(a))
+}
+
+func TestMatchFractionEarlyExitMatchesFullWalk(t *testing.T) {
+	for _, seed := range []int64{1, 7, 13, 42, 99} {
+		for _, noise := range []int{1, 3, 5} {
+			a := hashesOf(framesAt(0, 24))
+			b := make([][vhash.HashLen]byte, 24)
+			copy(b, a)
+			rng := rand.New(rand.NewSource(seed))
+			for k := 0; k < noise; k++ {
+				rng.Read(b[rng.Intn(24)][:])
+			}
+			for _, minMatch := range []float64{0.5, 0.8} {
+				got := matchFraction(a, b, 5, vhash.HashLen*8/5, minMatch) >= minMatch
+				want := fullWalk(a, b, 5, vhash.HashLen*8/5, minMatch) >= minMatch
+				if got != want {
+					t.Errorf("seed %d noise %d min-match %v: bailed decision %v, full-walk decision %v",
+						seed, noise, minMatch, got, want)
+				}
+			}
+		}
+	}
+}
+
 func TestMatchFractionEmpty(t *testing.T) {
 	a := hashesOf(framesAt(0, 5))
 	if got := matchFraction(a, nil, 5, 100, 0.8); got != 0 {

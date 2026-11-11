@@ -3,6 +3,7 @@ package dedup
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -191,6 +192,150 @@ func TestReportSelfSimilarNote(t *testing.T) {
 	tl.report(items, [][]int{{0, 1}}, 0)
 	if strings.Contains(out.String(), "self-similar") {
 		t.Errorf("rich-content group must not warn: %s", out.String())
+	}
+}
+
+func TestDedupFlagValidation(t *testing.T) {
+	for _, args := range [][]string{
+		{"-interval", "0", "dir"},
+		{"-min-match", "0", "dir"},
+		{"-min-match", "1.2", "dir"},
+		{"-max-dist", "0", "dir"},
+		{"-max-dist", "1.5", "dir"},
+	} {
+		if err := Run(args); err == nil {
+			t.Errorf("Run(%v) must fail validation", args)
+		}
+	}
+}
+
+func TestCandidateIndicesWithMissingDuration(t *testing.T) {
+	items := []item{
+		{path: "a", duration: 100, hasDur: true},
+		{path: "b", duration: 300, hasDur: true}, // incompatible with a
+		{path: "c", hasDur: false},               // no duration: pairs with everything
+	}
+	got := candidateIndices(items, 5)
+	if len(got) != 3 || got[0] != 0 || got[1] != 1 || got[2] != 2 {
+		t.Errorf("got %v, want [0 1 2] (the duration-less item drags all into extraction)", got)
+	}
+}
+
+func TestDedupNoDurationNote(t *testing.T) {
+	dir := t.TempDir()
+	a := filepath.Join(dir, "a.mkv")
+	b := filepath.Join(dir, "b.mkv")
+	writeFile(t, a, 100)
+	writeFile(t, b, 100)
+
+	noDur := `{"streams":[{"index":0,"codec_name":"h264","codec_type":"video","width":320,"height":240,"disposition":{"attached_pic":0}}],"format":{"size":"1000","bit_rate":"1"}}`
+	ff := &fakeFF{probeFor: func(src string) (string, bool) {
+		if filepath.Base(src) == "a.mkv" {
+			return noDur, true
+		}
+		return videoJSON("h264", 320, 240, "200.0"), true
+	}, framesFor: func(src string) []byte {
+		return framesAt(0, 10)
+	}}
+	out := &bytes.Buffer{}
+	tl := &tool{
+		r: ff, ffmpegBin: "ffmpeg", ffprobeBin: "ffprobe",
+		cfg:     &Config{Dir: dir, Interval: 2, MinMatch: 0.8, MaxDist: 0.15, Tolerance: 5},
+		ignores: mustIgnore(dir, "dedup", nil),
+		rep:     ui.New(out, ui.Profile{}),
+	}
+	// the no-duration note goes to stderr (rep.Note); capture it via a pipe
+	errR, errW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldStderr := os.Stderr
+	os.Stderr = errW
+	runErr := tl.runAll()
+	errW.Close()
+	os.Stderr = oldStderr
+	note, _ := io.ReadAll(errR)
+	if runErr != nil {
+		t.Fatalf("runAll: %v (out: %s)", runErr, out.String())
+	}
+	if !strings.Contains(string(note), "have no container duration") {
+		t.Errorf("missing no-duration note on stderr: %s", note)
+	}
+	// the duration-less file pairs with everything: both get extracted
+	if len(ff.frameArgs) != 2 {
+		t.Errorf("both files must be hashed, got %d extractions", len(ff.frameArgs))
+	}
+}
+
+func TestDedupSkipsIncompatiblePairs(t *testing.T) {
+	dir := t.TempDir()
+	paths := []string{
+		filepath.Join(dir, "a.mkv"), // 100 s
+		filepath.Join(dir, "b.mkv"), // 100 s - same content as a
+		filepath.Join(dir, "c.mkv"), // 200 s - same frames, out of tolerance for a/b
+	}
+	for _, p := range paths {
+		writeFile(t, p, 500)
+	}
+	durs := []string{"100.0", "100.0", "200.0"}
+	ff := &fakeFF{probeFor: func(src string) (string, bool) {
+		base := filepath.Base(src)
+		for i, name := range []string{"a.mkv", "b.mkv", "c.mkv"} {
+			if base == name {
+				return videoJSON("h264", 320, 240, durs[i]), true
+			}
+		}
+		return "", false
+	}, framesFor: func(src string) []byte {
+		return framesAt(0, 50) // all three carry identical content
+	}}
+	out := &bytes.Buffer{}
+	tl := &tool{
+		r: ff, ffmpegBin: "ffmpeg", ffprobeBin: "ffprobe",
+		cfg:     &Config{Dir: dir, Interval: 2, MinMatch: 0.8, MaxDist: 0.15, Tolerance: 5},
+		ignores: mustIgnore(dir, "dedup", nil),
+		rep:     ui.New(out, ui.Profile{}),
+	}
+	if err := tl.runAll(); err != nil {
+		t.Fatalf("runAll: %v", err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "Duplicate content group #1: 2 files") {
+		t.Errorf("a and b must group, c must stay out: %s", got)
+	}
+	if strings.Contains(got, "dup  "+paths[2]) {
+		t.Errorf("the out-of-tolerance c must not be grouped: %s", got)
+	}
+	if len(ff.frameArgs) != 2 {
+		t.Errorf("only a and b may be hashed, got %d extractions", len(ff.frameArgs))
+	}
+}
+
+func TestReportGroupOrderDeterministic(t *testing.T) {
+	items := []item{
+		{path: "/x/b1.mkv", size: 1000, width: 100, height: 100, codec: "h264"},
+		{path: "/x/a1.mkv", size: 900, width: 100, height: 100, codec: "h264"},
+		{path: "/x/d2.mkv", size: 1000, width: 100, height: 100, codec: "h264"},
+		{path: "/x/c2.mkv", size: 900, width: 100, height: 100, codec: "h264"},
+	}
+	// two equal-saving groups: the tie-break (keeper path) must keep the
+	// report stable regardless of the union-find map order
+	var first string
+	for run := 0; run < 50; run++ {
+		groups := unionGroups(4, [][2]int{{0, 1}, {2, 3}})
+		out := &bytes.Buffer{}
+		tl := &tool{rep: ui.New(out, ui.Profile{})}
+		tl.report(items, groups, 0)
+		if run == 0 {
+			first = out.String()
+			continue
+		}
+		if out.String() != first {
+			t.Fatal("group order is not deterministic across runs")
+		}
+	}
+	if !strings.Contains(first, "keep /x/b1.mkv") || strings.Index(first, "/x/b1.mkv") > strings.Index(first, "/x/d2.mkv") {
+		t.Errorf("groups must be ordered by keeper path on ties: %s", first)
 	}
 }
 

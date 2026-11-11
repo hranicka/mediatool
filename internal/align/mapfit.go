@@ -49,6 +49,9 @@ func buildTimingMap(matches []frameMatch, interval, dubDur float64, matchDist in
 	}
 
 	coef := polyfit2(cts, offs)
+	if !isFinite(coef) {
+		return nil, nil, nRel, 0, fmt.Errorf("timing map fit failed (degenerate matches)")
+	}
 	keep := make([]bool, nRel)
 	nKept := 0
 	for i := range offs {
@@ -68,6 +71,9 @@ func buildTimingMap(matches []frameMatch, interval, dubDur float64, matchDist in
 			}
 		}
 		coef2 = polyfit2(kc, ko)
+	}
+	if !isFinite(coef2) {
+		return nil, nil, nRel, nRel - nKept, fmt.Errorf("timing map refit failed (degenerate matches)")
 	}
 	nOut = nRel - nKept
 
@@ -121,6 +127,13 @@ func polyfit2(xs, ys []float64) [3]float64 {
 
 func polyval2(c [3]float64, x float64) float64 {
 	return c[0] + c[1]*x + c[2]*x*x
+}
+
+// isFinite reports whether all three coefficients are usable numbers
+// (a singular fit yields NaN/Inf instead of an error).
+func isFinite(c [3]float64) bool {
+	return !math.IsNaN(c[0]) && !math.IsNaN(c[1]) && !math.IsNaN(c[2]) &&
+		!math.IsInf(c[0], 0) && !math.IsInf(c[1], 0) && !math.IsInf(c[2], 0)
 }
 
 // solve3 solves a 3x3 linear system by Gauss-Jordan elimination with

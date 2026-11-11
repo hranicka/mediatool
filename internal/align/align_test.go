@@ -187,6 +187,63 @@ func TestAlignRunAll(t *testing.T) {
 	}
 }
 
+func TestAlignFlagValidation(t *testing.T) {
+	for _, args := range [][]string{
+		{"-interval", "0", "a", "b"},
+		{"-match-dist", "0", "a", "b"},
+		{"-match-dist", "1025", "a", "b"},
+	} {
+		if err := Run(args); err == nil {
+			t.Errorf("Run(%v) must fail validation", args)
+		}
+	}
+}
+
+func TestAlignReferenceWithoutAudio(t *testing.T) {
+	dir, ref, dub, ff := alignFixture(t)
+	videoOnly := `{"streams":[{"index":0,"codec_name":"h264","codec_type":"video","width":720,"height":576,"disposition":{"attached_pic":0}}],"format":{"duration":"20.0","size":"1000","bit_rate":"1"}}`
+	ff.probeFor = func(src string) (string, bool) {
+		if filepath.Base(src) == "ref.mkv" {
+			return videoOnly, true
+		}
+		return dubJSON, true
+	}
+	calls := 0
+	ff.framesFor = func(src string) []byte { calls++; return nil }
+
+	out := &bytes.Buffer{}
+	tl := newTestTool(t, dir, ff, &Config{Ref: ref, Dub: dub, Out: filepath.Join(dir, "out.mkv")}, out)
+	defer tl.guard.Cleanup()
+	if err := tl.runAll(); err == nil {
+		t.Fatal("expected an error for a reference without audio")
+	} else if !strings.Contains(err.Error(), "no audio track to copy") {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if calls != 0 {
+		t.Errorf("must fail before frame extraction, got %d extractions", calls)
+	}
+}
+
+func TestAlignMissingDuration(t *testing.T) {
+	dir, ref, dub, ff := alignFixture(t)
+	noDur := `{"streams":[{"index":0,"codec_name":"h264","codec_type":"video","width":720,"height":576,"disposition":{"attached_pic":0}},{"index":1,"codec_name":"ac3","codec_type":"audio"}],"format":{"size":"1000","bit_rate":"1"}}`
+	ff.probeFor = func(src string) (string, bool) {
+		if filepath.Base(src) == "ref.mkv" {
+			return noDur, true
+		}
+		return dubJSON, true
+	}
+
+	out := &bytes.Buffer{}
+	tl := newTestTool(t, dir, ff, &Config{Ref: ref, Dub: dub, Out: filepath.Join(dir, "out.mkv")}, out)
+	defer tl.guard.Cleanup()
+	if err := tl.runAll(); err == nil {
+		t.Fatal("expected an error for a missing reference duration")
+	} else if !strings.Contains(err.Error(), "cannot determine the reference duration") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
 func TestAlignDryRun(t *testing.T) {
 	dir, ref, dub, ff := alignFixture(t)
 	outPath := filepath.Join(dir, "ref+dub.mkv")

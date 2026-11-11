@@ -164,9 +164,14 @@ walk, so shifted starts, cut scenes and framerate variants are tolerated.
 Only files whose durations are within `-tolerance` percent (10 s floor)
 are compared, so most of the library never pays for frame extraction; a
 pair matches when at least `-min-match` of the frames match reliably
-(hamming distance ≤ `-max-dist` of the hash bits). Output groups the
+(hamming distance ≤ `-max-dist` of the hash bits). Shifted starts are
+followed within the walk window (±100 s at the default interval). Files
+without a container duration pair with everything (the run notes them).
+Output groups the
 matches, marks the suggested keeper (highest resolution, then the larger
-file) and totals the reclaimable space — deletion stays manual.
+file) and totals the reclaimable space — deletion stays manual. Groups
+whose members' frames are highly self-similar (synthetic patterns, long
+static scenes) carry a caution note: matches may be spurious there.
 
 Frame extraction decodes the whole file, so expect the hashing phase to
 run a while for large libraries; everything else is cheap.
@@ -182,10 +187,14 @@ Appends a **dubbed audio track to a reference video** by scene matching
 (the `REF+dub.mkv` output carries the reference video, its own audio and
 subtitles plus the resampled dub as a second AAC track). Frames sampled
 from both files are perceptually hashed; each dubbed frame matches the
-best reference frame within a windowed neighborhood, a quadratic fit with
-outlier rejection turns the matches into a smooth monotonic timing map
-(tolerating different framerates, shifted starts and cut scenes), and the
-dub audio is resampled onto that map before muxing. `-n` stops after the
+best reference frame within a windowed neighborhood (±10 s at the default
+interval, so shifted starts must stay inside that bound), a quadratic fit
+with outlier rejection turns the matches into a smooth monotonic timing
+map (tolerating different framerates and cut scenes), and the dub audio
+is resampled onto that map before muxing. The run refuses implausible
+maps (span outside 80–125% of the dub's duration — the signature of
+self-similar content where matches map noise) and warns when frames are
+highly self-similar. `-n` stops after the
 timing map and prints it — check the offsets before committing to the
 encode. Port of the align_audio.py workflow.
 

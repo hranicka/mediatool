@@ -79,6 +79,15 @@ func Run(args []string) error {
 		slog.SetLogLoggerLevel(slog.LevelDebug)
 	}
 	cfg.Verbose = verbose
+	if cfg.Interval <= 0 {
+		return fmt.Errorf("-interval must be positive")
+	}
+	if cfg.MinMatch <= 0 || cfg.MinMatch > 1 {
+		return fmt.Errorf("-min-match must be in (0, 1]")
+	}
+	if cfg.MaxDist <= 0 || cfg.MaxDist > 1 {
+		return fmt.Errorf("-max-dist must be in (0, 1]")
+	}
 	if fs.NArg() != 1 {
 		fmt.Fprintln(os.Stderr, "usage: mediatool dedup [flags] <directory>")
 		return fmt.Errorf("dedup needs exactly one directory argument")
@@ -134,6 +143,9 @@ func (t *tool) runAll() error {
 
 	// phase 1: cheap metadata for every file
 	items := t.scan(files)
+	if n := countWithoutDuration(items); n > 0 {
+		t.rep.Note(fmt.Sprintf("note: %d file(s) have no container duration and pair with everything - frame extraction may cover the whole library", n))
+	}
 
 	// phase 2: frame signatures only for the duration-compatible candidates
 	candidates := candidateIndices(items, t.cfg.Tolerance)
@@ -204,7 +216,9 @@ func (t *tool) probeItem(path string) (item, error) {
 // extract hashes the frame signatures of every candidate item; a failed
 // extraction surfaces as a note and leaves the item out of the pairing.
 func (t *tool) extract(items []item, candidates []int) {
-	minFrames := max(1, int(5/t.cfg.Interval))
+	// background pairs must sit >=5 s apart on the timeline (ceil, so a
+	// coarse interval never undershoots the measured calibration basis)
+	minFrames := max(1, int(math.Ceil(5/t.cfg.Interval)))
 	for k, idx := range candidates {
 		it := &items[idx]
 		t.rep.Phase("hashing %d/%d %s (decoding can take a while)", k+1, len(candidates), filepath.Base(it.path))
@@ -234,6 +248,11 @@ func (t *tool) matchPairs(items []item) [][2]int {
 			if len(items[j].hashes) == 0 {
 				continue
 			}
+			if !compatibleDuration(items[i], items[j], t.cfg.Tolerance) {
+				// transitive candidates may still be mutually incompatible
+				// (A-B and B-C within tolerance, A-C not)
+				continue
+			}
 			frac := matchFraction(items[i].hashes, items[j].hashes, window, maxBits, t.cfg.MinMatch)
 			slog.Debug("pair match", "a", items[i].path, "b", items[j].path, "fraction", frac)
 			if frac >= t.cfg.MinMatch {
@@ -245,14 +264,20 @@ func (t *tool) matchPairs(items []item) [][2]int {
 }
 
 // report prints the duplicate groups — members sorted with the suggested
-// keeper first — plus the savings line and the summary.
+// keeper first, groups ordered by reclaimable space with a deterministic
+// tie-break — plus the savings line and the summary.
 func (t *tool) report(items []item, groups [][]int, elapsed time.Duration) {
+	for _, members := range groups {
+		sortMembers(items, members)
+	}
 	sort.Slice(groups, func(a, b int) bool {
-		return groupSaving(items, groups[a]) > groupSaving(items, groups[b])
+		if sa, sb := groupSaving(items, groups[a]), groupSaving(items, groups[b]); sa != sb {
+			return sa > sb
+		}
+		return items[groups[a][0]].path < items[groups[b][0]].path
 	})
 	var totalSaving int64
 	for gi, members := range groups {
-		sortMembers(items, members)
 		var total int64
 		for _, m := range members {
 			total += items[m].size
@@ -318,6 +343,19 @@ func sortMembers(items []item, members []int) {
 		}
 		return x.path < y.path
 	})
+}
+
+// countWithoutDuration returns how many items ffprobe could not produce a
+// container duration for; each of them pairs with everything, so the note
+// explains why the run may hash the whole library.
+func countWithoutDuration(items []item) int {
+	n := 0
+	for i := range items {
+		if !items[i].hasDur {
+			n++
+		}
+	}
+	return n
 }
 
 // candidateIndices marks items with at least one duration-compatible peer;

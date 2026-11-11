@@ -83,8 +83,24 @@ func TestBackgroundDistance(t *testing.T) {
 		t.Errorf("too few frames: got %d, want -1", got)
 	}
 	// deterministic: two runs agree
-	if BackgroundDistance(noise, 5, 200) != BackgroundDistance(noise, 5, 200) {
-		t.Error("BackgroundDistance must be deterministic")
+	first := BackgroundDistance(noise, 5, 200)
+	second := BackgroundDistance(noise, 5, 200)
+	if first != second {
+		t.Errorf("BackgroundDistance must be deterministic: %d vs %d", first, second)
+	}
+}
+
+func TestWindowBestWantOutOfRange(t *testing.T) {
+	// identical signatures: every candidate ties at distance 0, the tie
+	// must go to the position closest to want - including when want sits
+	// past the end of the window (prefer the largest k)
+	a := make([][HashLen]byte, 3)
+	b := make([][HashLen]byte, 10)
+	if best, dist := WindowBest(a, b, 0, 5, 10, 10); best != 9 || dist != 0 {
+		t.Errorf("got %d dist %d, want 9 dist 0", best, dist)
+	}
+	if best, _ := WindowBest(a, b, 0, 2, 6, 5); best != 5 {
+		t.Errorf("got %d, want 5 (closest to want inside the window)", best)
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -65,6 +66,12 @@ func Run(args []string) error {
 		slog.SetLogLoggerLevel(slog.LevelDebug)
 	}
 	cfg.Verbose = verbose
+	if cfg.Interval <= 0 {
+		return fmt.Errorf("-interval must be positive")
+	}
+	if cfg.MatchDist < 1 || cfg.MatchDist > vhash.Side*vhash.Side {
+		return fmt.Errorf("-match-dist must be in [1, %d] bits", vhash.Side*vhash.Side)
+	}
 	if fs.NArg() < 2 || fs.NArg() > 3 {
 		fmt.Fprintln(os.Stderr, "usage: mediatool align [flags] <reference> <dubbed> [output]")
 		return fmt.Errorf("align needs a reference and a dubbed file (and an optional output path)")
@@ -147,7 +154,8 @@ func (t *tool) runAll() error {
 
 	// self-similarity guard: on synthetic or static content a match is
 	// barely better evidence than chance, however small its distance
-	minFrames := max(1, int(5.0/t.cfg.Interval))
+	// (background pairs >=5 s apart on the timeline)
+	minFrames := max(1, int(math.Ceil(5.0/t.cfg.Interval)))
 	bgRef := vhash.BackgroundDistance(refHashes, minFrames, 200)
 	bgDub := vhash.BackgroundDistance(dubHashes, minFrames, 200)
 	bg := minPositive(bgRef, bgDub)
@@ -167,7 +175,7 @@ func (t *tool) runAll() error {
 	}
 	t.rep.Raw(ui.GoodTone, "Timing map: %d reliable matches, %d outliers dropped\n", nRel, nOut)
 	t.rep.Raw(ui.Neutral, "dub 0s -> ref %.1fs; dub %.0fs -> ref %.1fs\n", enGrid[0], dubDur, enGrid[len(enGrid)-1])
-	step := max(1, int(dubDur)/10)
+	step := max(1, (int(dubDur)+9)/10)
 	for s := 0; s < int(dubDur); s += step {
 		t.rep.Raw(ui.Neutral, "  dub %5ds -> ref %6.1fs  (offset %+.1fs)\n", s, enGrid[s], enGrid[s]-float64(s))
 	}
@@ -196,7 +204,9 @@ func (t *tool) runAll() error {
 	return nil
 }
 
-// probeInputs checks both files and that the dub carries an audio track.
+// probeInputs checks both files before the expensive passes run: usable
+// durations (they size the map and the resampled audio) and an audio track
+// on each side.
 func (t *tool) probeInputs() (refInfo, dubInfo *probe.Info, err error) {
 	if refInfo, err = probe.Probe(t.r, t.ffprobeBin, t.cfg.Ref); err != nil {
 		return nil, nil, fmt.Errorf("reference: %w", err)
@@ -204,8 +214,20 @@ func (t *tool) probeInputs() (refInfo, dubInfo *probe.Info, err error) {
 	if dubInfo, err = probe.Probe(t.r, t.ffprobeBin, t.cfg.Dub); err != nil {
 		return nil, nil, fmt.Errorf("dubbed: %w", err)
 	}
+	if d, ok := refInfo.Duration(); !ok || d <= 0 {
+		return nil, nil, fmt.Errorf("cannot determine the reference duration - needed to size the timing map and the resampled audio")
+	}
+	if d, ok := dubInfo.Duration(); !ok || d <= 0 {
+		return nil, nil, fmt.Errorf("cannot determine the dubbed duration - needed to size the timing map")
+	}
+	if len(refInfo.ByType()[probe.TypeAudio]) == 0 {
+		return nil, nil, fmt.Errorf("%s has no audio track to copy", t.cfg.Ref)
+	}
 	if len(dubInfo.ByType()[probe.TypeAudio]) == 0 {
 		return nil, nil, fmt.Errorf("%s has no audio track to align", t.cfg.Dub)
+	}
+	if nAttach := len(refInfo.ByType()["attachment"]); nAttach > 0 {
+		t.rep.Note(fmt.Sprintf("note: the reference carries %d attachment stream(s) (e.g. fonts) that the mux does not copy", nAttach))
 	}
 	return refInfo, dubInfo, nil
 }
