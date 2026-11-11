@@ -21,6 +21,15 @@
   files with at least one duration-compatible peer. Groups print with a
   suggested keeper (highest resolution, then the larger file) and the
   reclaimable space; deletion stays manual.
+- **`align`** — a new command appending a dubbed audio track to a
+  reference video by scene matching (port of align_audio.py): perceptual
+  frame hashes from both files, windowed matching, a quadratic-fit
+  monotonic timing map with outlier rejection, and a streaming resampler
+  that maps the dub onto the reference timeline before muxing it as a
+  tagged AAC track next to the untouched reference video, audio and
+  subtitles. `-n` prints the timing map (endpoints and 10 sample offsets)
+  without muxing. The frame hashing is shared with dedup via the new
+  `internal/vhash` package.
 - **Clearer convert settings header** — the run header now spells out the
   full effective plan, defaults included, so a run is self-describing: a
   dedicated `Quality` line names the strategy (quality target, the

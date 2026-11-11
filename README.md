@@ -171,6 +171,24 @@ file) and totals the reclaimable space — deletion stays manual.
 Frame extraction decodes the whole file, so expect the hashing phase to
 run a while for large libraries; everything else is cheap.
 
+### align
+
+```
+mediatool align [-interval 0.2] [-match-dist 45] [-bitrate 192k]
+                [-lang-ref eng] [-lang-dub ces] [-n] <reference> <dubbed> [output]
+```
+
+Appends a **dubbed audio track to a reference video** by scene matching
+(the `REF+dub.mkv` output carries the reference video, its own audio and
+subtitles plus the resampled dub as a second AAC track). Frames sampled
+from both files are perceptually hashed; each dubbed frame matches the
+best reference frame within a windowed neighborhood, a quadratic fit with
+outlier rejection turns the matches into a smooth monotonic timing map
+(tolerating different framerates, shifted starts and cut scenes), and the
+dub audio is resampled onto that map before muxing. `-n` stops after the
+timing map and prints it — check the offsets before committing to the
+encode. Port of the align_audio.py workflow.
+
 ### enhance
 
 ```

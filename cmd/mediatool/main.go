@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/hranicka/mediatool/internal/ac3"
+	"github.com/hranicka/mediatool/internal/align"
 	"github.com/hranicka/mediatool/internal/clean"
 	"github.com/hranicka/mediatool/internal/convert"
 	"github.com/hranicka/mediatool/internal/dedup"
@@ -29,6 +30,7 @@ Commands:
   dup       report duplicate audio tracks (read-only)
   dedup     report content duplicates across files (read-only)
   enhance   AI-upscale with Real-ESRGAN and re-encode to HEVC 1080p
+  align     append a dubbed audio track to a reference video by scene matching
   version   print the version
 
 Library-touching commands work on a directory (or a single file where noted),
@@ -57,6 +59,8 @@ func main() {
 		err = dedup.Run(os.Args[2:])
 	case "enhance":
 		err = enhance.Run(os.Args[2:])
+	case "align":
+		err = align.Run(os.Args[2:])
 	case "version":
 		fmt.Println("mediatool " + version)
 		return
