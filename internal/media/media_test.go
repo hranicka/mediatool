@@ -13,18 +13,25 @@ func TestExpandWhitelist(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got %v, want %v", got, want)
 	}
+
+	// full names expand like their codes
+	got = ExpandWhitelist([]string{"Czech", "English"})
+	if !reflect.DeepEqual(got, want[:6]) {
+		t.Errorf("full names: got %v, want %v", got, want[:6])
+	}
 }
 
 func TestLangKept(t *testing.T) {
 	wl := ExpandWhitelist([]string{"cs", "en"})
 
-	kept := []string{"", "und", "unknown", "cs", "CES", "cze", "cz", "en", "ENG", "eng"}
+	kept := []string{"", "und", "unknown", "cs", "CES", "cze", "cz", "en", "ENG", "eng",
+		"English", "english", "Czech", "czech"}
 	for _, tag := range kept {
 		if !LangKept(tag, wl) {
 			t.Errorf("tag %q should be kept", tag)
 		}
 	}
-	dropped := []string{"ger", "rus", "jpn", "english"}
+	dropped := []string{"ger", "rus", "jpn", "German", "French"}
 	for _, tag := range dropped {
 		if LangKept(tag, wl) {
 			t.Errorf("tag %q should be dropped", tag)

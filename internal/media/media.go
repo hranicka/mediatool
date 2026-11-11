@@ -15,33 +15,59 @@ var untagged = map[string]bool{"": true, "und": true, "unknown": true}
 
 var commentaryRe = regexp.MustCompile(`(?i)comment|director`)
 
+// langNames maps full English language names to their ISO 639-2 code.
+// Some muxers tag tracks with the word ("English", "Czech") rather than
+// the code ("eng", "cze"); normalizing lets the code-based whitelist match
+// both spellings.
+var langNames = map[string]string{
+	"arabic": "ara", "bulgarian": "bul", "chinese": "chi", "croatian": "hrv",
+	"czech": "cze", "danish": "dan", "dutch": "dut", "english": "eng",
+	"finnish": "fin", "french": "fre", "german": "ger", "greek": "gre",
+	"hebrew": "heb", "hindi": "hin", "hungarian": "hun", "indonesian": "ind",
+	"italian": "ita", "japanese": "jpn", "korean": "kor", "norwegian": "nor",
+	"polish": "pol", "portuguese": "por", "romanian": "rum", "russian": "rus",
+	"serbian": "srp", "slovak": "slo", "spanish": "spa", "swedish": "swe",
+	"thai": "tha", "turkish": "tur", "ukrainian": "ukr", "vietnamese": "vie",
+}
+
+// normalizeLang lowercases a tag and resolves a full language name to its
+// ISO 639-2 code; codes and unknown tags pass through lowercased.
+func normalizeLang(tag string) string {
+	t := strings.ToLower(strings.TrimSpace(tag))
+	if code, ok := langNames[t]; ok {
+		return code
+	}
+	return t
+}
+
 // ExpandWhitelist expands the requested languages to their alias spellings
-// (cs -> cs/ces/cze/cz, en -> en/eng; other entries pass through lowercased).
+// (cs -> cs/ces/cze/cz, en -> en/eng; other entries pass through normalized).
+// Full names ("czech", "english") are accepted like their codes.
 func ExpandWhitelist(langs []string) []string {
 	var out []string
 	for _, l := range langs {
-		switch strings.ToLower(l) {
-		case "cs":
+		switch normalizeLang(l) {
+		case "cs", "ces", "cze", "cz":
 			out = append(out, "cs", "ces", "cze", "cz")
-		case "en":
+		case "en", "eng":
 			out = append(out, "en", "eng")
 		default:
-			out = append(out, strings.ToLower(l))
+			out = append(out, normalizeLang(l))
 		}
 	}
 	return out
 }
 
 // LangKept reports whether a stream's language tag passes the whitelist
-// (case-insensitive on both sides; missing/und/unknown tags always count
-// as kept).
+// (case-insensitive on both sides, full names resolved to codes;
+// missing/und/unknown tags always count as kept).
 func LangKept(tag string, whitelist []string) bool {
-	tag = strings.ToLower(tag)
+	tag = normalizeLang(tag)
 	if untagged[tag] {
 		return true
 	}
 	for _, w := range whitelist {
-		if tag == strings.ToLower(w) {
+		if tag == normalizeLang(w) {
 			return true
 		}
 	}
