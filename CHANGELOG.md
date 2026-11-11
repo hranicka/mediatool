@@ -44,6 +44,14 @@
   video/audio/subtitles, so it silently dropped teletext/data streams and
   rewrote the container under the original name. Use `convert` for these
   formats; clean handles `.mkv`/`.mp4`.
+- **convert: lossless container selection + matching filename** — non-MKV
+  sources now mux to MP4 only when they carry video+audio alone; anything
+  with subtitles, teletext/data or attachments goes to MKV so nothing is
+  lost (previously everything became MP4, dropping DVB subtitles/teletext).
+  The output extension follows the container (`part1.ts` → `part1.mkv`,
+  `cam.ts` → `cam.mp4`), the original is kept as `<source>.old`, and the
+  rename is reported as an `output:` line. MKV sources and Chromecast mode
+  are unchanged.
 
 ## 2.0.1
 

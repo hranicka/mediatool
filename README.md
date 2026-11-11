@@ -77,10 +77,14 @@ an explicitly passed flag (`-p tablet -r 1080p -q 28 -a copy`):
 - **Deinterlace is automatic**: sources flagged interlaced (field order
   tt/tb/bt/bb) are yadif-deinterlaced before scaling, on every backend.
 - `-r 1080p` downscales only (never upscales), aspect ratio preserved.
-- MKV sources stay MKV; every other container muxes to MP4 with
-  `+faststart`. The walk picks up `.mkv/.mp4` plus the camera formats
-  `.mts/.m2ts/.ts/.mpg/.mpeg/.avi/.mov/.wmv`; MPEG-TS/AVI inputs get
-  `+genpts`. The converted file keeps the source's mtime.
+- Container selection: MKV sources stay MKV. Other sources mux to MP4
+  (with `+faststart`) only when they carry video+audio alone; anything with
+  subtitles, teletext/data or attachments goes to MKV so nothing is lost.
+  The output extension follows the container (`part1.ts` → `part1.mkv`,
+  `cam.ts` → `cam.mp4`), the original is kept as `<source>.old`, and the
+  rename is shown as an `output:` line. The walk picks up `.mkv/.mp4` plus
+  the camera formats `.mts/.m2ts/.ts/.mpg/.mpeg/.avi/.mov/.wmv`; MPEG-TS/AVI
+  inputs get `+genpts`. The converted file keeps the source's mtime.
 - Files with several real video streams (3D MVC) are skipped; cover-art
   streams (mjpeg/png/attached_pic) are dropped from the encode.
 - Retry ladder: hardware decode with subtitles → without → software decode
