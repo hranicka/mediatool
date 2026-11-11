@@ -219,6 +219,12 @@ func TestCleanSoleTrackRule(t *testing.T) {
 	if !strings.Contains(out.String(), "OK (nothing to remove)") {
 		t.Errorf("unexpected output: %s", out.String())
 	}
+	// the kept foreign sole tracks are surfaced as notices, not hidden
+	for _, want := range []string{"sole audio track", "sole subtitle track"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("sole-track notice %q missing: %s", want, out.String())
+		}
+	}
 
 	// -e purges them
 	ff2 := &fakeFF{probeFor: func(src string) (string, bool) {
@@ -235,6 +241,33 @@ func TestCleanSoleTrackRule(t *testing.T) {
 	args := ff2.remuxLog[0]
 	if !hasPair(args, "-map", "-0:a:0") || !hasPair(args, "-map", "-0:s:0") {
 		t.Errorf("purge maps missing: %v", args)
+	}
+}
+
+// TestCleanSoleTrackNoticeQuiet pins that the sole-track keep notice stays
+// a permanent yellow line in the default (quiet) interactive rendering,
+// even though the file itself is an untouched "nothing to remove" no-op.
+func TestCleanSoleTrackNoticeQuiet(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "solo.mkv")
+	writeFile(t, src, 1000)
+
+	soloJSON := fmt.Sprintf(`{"streams":[%s,%s],"format":{"duration":"600.0","size":"1000","bit_rate":"1"}}`,
+		streamJSON("h264", "video", "", ""),
+		streamJSON("aac", "audio", "rus", ""))
+	ff := &fakeFF{probeFor: func(string) (string, bool) { return soloJSON, true }}
+	out := &bytes.Buffer{}
+	tl := newTestTool(t, dir, ff, &Config{Target: dir, Langs: "cs,en"}, out)
+	tl.rep = ui.New(out, ui.Profile{Interactive: true, Color: true, UTF8: true, Width: 100})
+	tl.processFile(1, 1, src)
+
+	got := out.String()
+	if !strings.Contains(got, "\x1b[33m") || !strings.Contains(got, "sole audio track") {
+		t.Errorf("quiet run must show a yellow sole-track notice: %q", got)
+	}
+	// the notice is a permanent line (newline-terminated), not a live rewrite
+	if !strings.Contains(got, "sole audio track\x1b[0m\n") {
+		t.Errorf("sole-track notice must be a permanent line: %q", got)
 	}
 }
 

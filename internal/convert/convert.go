@@ -513,6 +513,9 @@ func (t *tool) processFile(i, n int, path string) {
 		}
 		keptAudio, keptSubs = kept, tp.KeptSubs
 		cleanupLines = tp.Lines
+		for _, s := range tp.SoleKept {
+			t.rep.Notice(i, n, path, s)
+		}
 	}
 
 	if cfg.DryRun {

@@ -27,6 +27,12 @@
   removed by `clean` (and `convert -l`). Language names now normalize to
   their codes on both the tag and whitelist sides, so both spellings
   match.
+- **Sole-track keeps are now flagged** — when `clean` (or `convert -l`)
+  keeps a foreign audio/subtitle track because it is the only one of its
+  type, it prints a yellow ⚠ notice instead of hiding the decision. This
+  also surfaces the case where the file is otherwise untouched ("nothing
+  to remove"), which previously gave no hint that a non-whitelisted track
+  survived.
 
 ## 2.0.1
 

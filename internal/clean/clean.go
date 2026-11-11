@@ -197,12 +197,15 @@ func (t *tool) skip(i, n int, path, reason string) {
 // TrackPlan is the audio/subtitle removal plan for one file under a
 // language whitelist: the input per-type ordinals to drop and the counts
 // that must survive the remux. Sole tracks are kept unless purgeSole.
+// Lines describes the removals; SoleKept lists the foreign sole tracks
+// kept by the sole-track rule, which callers surface as a notice.
 type TrackPlan struct {
 	RemoveAudio []int
 	RemoveSubs  []int
 	KeptAudio   int
 	KeptSubs    int
 	Lines       []string
+	SoleKept    []string
 }
 
 // PlanTracks classifies audio and subtitle tracks against the whitelist —
@@ -218,7 +221,7 @@ func PlanTracks(info *probe.Info, whitelist []string, purgeSole bool) TrackPlan 
 			continue
 		}
 		if src.audio == 1 && !purgeSole {
-			plan.Lines = append(plan.Lines, fmt.Sprintf("keep audio #%d (%s, lang '%s') - sole audio track", ta.Ordinal, ta.Stream.CodecName, media.LangDisplay(lang)))
+			plan.SoleKept = append(plan.SoleKept, fmt.Sprintf("keep audio #%d (%s, lang '%s') - sole audio track", ta.Ordinal, ta.Stream.CodecName, media.LangDisplay(lang)))
 			continue
 		}
 		plan.RemoveAudio = append(plan.RemoveAudio, ta.Ordinal)
@@ -231,7 +234,7 @@ func PlanTracks(info *probe.Info, whitelist []string, purgeSole bool) TrackPlan 
 			continue
 		}
 		if src.subtitle == 1 && !purgeSole {
-			plan.Lines = append(plan.Lines, fmt.Sprintf("keep subtitle #%d (%s, lang '%s') - sole subtitle track", ts.Ordinal, ts.Stream.CodecName, media.LangDisplay(lang)))
+			plan.SoleKept = append(plan.SoleKept, fmt.Sprintf("keep subtitle #%d (%s, lang '%s') - sole subtitle track", ts.Ordinal, ts.Stream.CodecName, media.LangDisplay(lang)))
 			continue
 		}
 		plan.RemoveSubs = append(plan.RemoveSubs, ts.Ordinal)
@@ -272,6 +275,12 @@ func (t *tool) processFile(i, n int, path string) {
 	}
 	plan = append(plan, trackPlan.Lines...)
 	keep := counts{video: src.video, audio: trackPlan.KeptAudio, subtitle: trackPlan.KeptSubs}
+
+	// foreign sole tracks survive the sole-track rule; surface that as a
+	// notice even when nothing else is removed (the file stays untouched)
+	for _, s := range trackPlan.SoleKept {
+		t.rep.Notice(i, n, path, s)
+	}
 
 	if len(removeArgs) == 0 {
 		t.rep.OK(i, n, path, "nothing to remove")
