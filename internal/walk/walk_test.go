@@ -75,6 +75,50 @@ func TestMediaMissingDir(t *testing.T) {
 	}
 }
 
+func TestOldFiles(t *testing.T) {
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "season 1")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	files := []string{
+		"movie.mkv.old",                          // backup - picked up
+		filepath.Join("season 1", "show.ts.old"), // camera-format backup - picked up
+		"SHOW.MKV.OLD",                           // uppercase suffix is not the tool's convention - excluded
+		"a.mkv",                                  // media - excluded
+		"notes.old.bak",                          // .old must be the suffix - excluded
+		"._movie.mkv.old",                        // AppleDouble - excluded
+	}
+	for _, f := range files {
+		if err := os.WriteFile(filepath.Join(dir, f), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, err := OldFiles(dir)
+	if err != nil {
+		t.Fatalf("OldFiles: %v", err)
+	}
+	want := []string{
+		filepath.Join(dir, "movie.mkv.old"),
+		filepath.Join(sub, "show.ts.old"),
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+}
+
+func TestOldFilesMissingDir(t *testing.T) {
+	if _, err := OldFiles(filepath.Join(t.TempDir(), "nope")); err == nil {
+		t.Fatal("expected error for missing directory")
+	}
+}
+
 func TestMediaSkipsUnreadableSubdir(t *testing.T) {
 	dir := t.TempDir()
 	sub := filepath.Join(dir, "locked")

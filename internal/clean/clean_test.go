@@ -203,6 +203,103 @@ func TestCleanNoBackup(t *testing.T) {
 	}
 }
 
+func TestCleanOldRemovesBackups(t *testing.T) {
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "sub")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old1 := filepath.Join(dir, "movie.mkv.old")
+	old2 := filepath.Join(sub, "show.ts.old")
+	keep := filepath.Join(dir, "other.mkv")
+	stranger := filepath.Join(dir, "notes.old.bak")
+	writeFile(t, old1, 1_500_000)
+	writeFile(t, old2, 500_000)
+	writeFile(t, keep, 10)
+	writeFile(t, stranger, 10)
+
+	out := &bytes.Buffer{}
+	tl := newTestTool(t, dir, &fakeFF{}, &Config{Target: dir, RemoveOld: true}, out)
+	if err := tl.runAll(); err != nil {
+		t.Fatalf("runAll: %v", err)
+	}
+
+	if tl.cleaned != 2 || tl.failed != 0 {
+		t.Fatalf("counters: cleaned=%d failed=%d out=%s", tl.cleaned, tl.failed, out.String())
+	}
+	if tl.bytesIn != 2_000_000 {
+		t.Errorf("freed bytes: got %d, want 2000000", tl.bytesIn)
+	}
+	for _, gone := range []string{old1, old2} {
+		if _, err := os.Stat(gone); err == nil {
+			t.Errorf("%s must be removed", gone)
+		}
+	}
+	for _, kept := range []string{keep, stranger} {
+		if _, err := os.Stat(kept); err != nil {
+			t.Errorf("%s must stay", kept)
+		}
+	}
+	got := out.String()
+	if !strings.Contains(got, "Removed: "+old1) || !strings.Contains(got, "Removed: "+old2) {
+		t.Errorf("missing removal lines: %s", got)
+	}
+	if !strings.Contains(got, "freed") {
+		t.Errorf("summary must report the freed bytes: %s", got)
+	}
+}
+
+func TestCleanOldDryRunAndIgnores(t *testing.T) {
+	dir := t.TempDir()
+	old1 := filepath.Join(dir, "movie.mkv.old")
+	old2 := filepath.Join(dir, "show.ts.old")
+	writeFile(t, old1, 1_000)
+	writeFile(t, old2, 2_000)
+
+	out := &bytes.Buffer{}
+	tl := newTestTool(t, dir, &fakeFF{}, &Config{Target: dir, RemoveOld: true, DryRun: true, Ignores: []string{"show"}}, out)
+	if err := tl.runAll(); err != nil {
+		t.Fatalf("runAll: %v", err)
+	}
+
+	if tl.cleaned != 1 || tl.untouched != 1 || tl.failed != 0 {
+		t.Fatalf("counters: cleaned=%d untouched=%d out=%s", tl.cleaned, tl.untouched, out.String())
+	}
+	for _, f := range []string{old1, old2} {
+		if _, err := os.Stat(f); err != nil {
+			t.Error("dry run must not delete")
+		}
+	}
+	got := out.String()
+	if !strings.Contains(got, "Would remove: "+old1) {
+		t.Errorf("missing dry-run line: %s", got)
+	}
+	if !strings.Contains(got, "Skipping (ignored): "+old2) {
+		t.Errorf("missing ignore line: %s", got)
+	}
+}
+
+func TestCleanOldRefusesNonBackupFile(t *testing.T) {
+	dir := t.TempDir()
+	notOld := filepath.Join(dir, "movie.mkv")
+	writeFile(t, notOld, 10)
+
+	out := &bytes.Buffer{}
+	tl := newTestTool(t, dir, &fakeFF{}, &Config{Target: notOld, RemoveOld: true}, out)
+	if err := tl.runAll(); err != nil {
+		t.Fatalf("runAll: %v", err)
+	}
+	if tl.cleaned != 0 || tl.untouched != 1 || tl.failed != 0 {
+		t.Fatalf("counters: cleaned=%d untouched=%d out=%s", tl.cleaned, tl.untouched, out.String())
+	}
+	if _, err := os.Stat(notOld); err != nil {
+		t.Error("a non-backup file must never be removed")
+	}
+	if !strings.Contains(out.String(), "not a .old file") {
+		t.Errorf("missing refusal line: %s", out.String())
+	}
+}
+
 func TestCleanDryRunPlan(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "movie.mkv")

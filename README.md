@@ -103,7 +103,7 @@ multipass to spend bits better on motion and grain.
 ### clean
 
 ```
-mediatool clean [-l cs,en] [-e] [-i list] [-n] <dir|file>
+mediatool clean [-l cs,en] [-e] [-old] [-i list] [-n] <dir|file>
 ```
 
 Removes audio and subtitle tracks whose language tag is outside the
@@ -118,6 +118,12 @@ stream-count gates. Only `.mkv`/`.mp4` are processed; broadcast dumps
 teletext/data streams — use `convert` for those. Note: MP4 files usually
 carry no language tags, so cleaning them is mostly a no-op except
 cover-art removal.
+
+With `-old` the command switches to a deletion mode: it removes the
+`.old` backup files of previous runs instead of cleaning tracks (the
+target may be a directory or a single `.old` file; `-l`/`-e` do not
+apply). Honors the ignore rules and `-n`; the summary reports the freed
+space.
 
 ### ac3
 

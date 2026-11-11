@@ -95,6 +95,15 @@ func TestPlainSuccessNoBackup(t *testing.T) {
 	}
 }
 
+func TestPlainRemoved(t *testing.T) {
+	rep, buf := plain()
+	rep.Removed(1, 2, "/a.mkv.old", "1.5G")
+	want := "Removed: /a.mkv.old (1.5G)\n"
+	if got := buf.String(); got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
 func TestPlainSummary(t *testing.T) {
 	rep, buf := plain()
 	rep.Summary("Done.", "Converted", "skipped", Outcome{Done: 38, Skipped: 3, Failed: 1})

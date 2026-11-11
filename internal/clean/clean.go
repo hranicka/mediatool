@@ -30,6 +30,7 @@ type Config struct {
 	Target    string
 	Langs     string
 	PurgeSole bool
+	RemoveOld bool
 	Ignores   []string
 	DryRun    bool
 	NoBackup  bool
@@ -75,6 +76,7 @@ func Run(args []string) error {
 	var verbose bool
 	fs.StringVar(&cfg.Langs, "l", "cs,en", "whitelist languages, comma separated (cs/en expand to their alias spellings)")
 	fs.BoolVar(&cfg.PurgeSole, "e", false, "purge even the only track of its type when its language is not whitelisted")
+	fs.BoolVar(&cfg.RemoveOld, "old", false, "remove the .old backup files of previous runs instead of cleaning tracks (-l/-e do not apply)")
 	fs.Var(cli.Ignores{Dst: &cfg.Ignores}, "i", "comma-separated substrings to ignore (also read from the dot ignore files)")
 	fs.BoolVar(&cfg.DryRun, "n", false, "dry run: list what would be removed")
 	fs.BoolVar(&cfg.NoBackup, "no-backup", false, "replace files in place without keeping .old backups (the originals are removed)")
@@ -90,7 +92,15 @@ func Run(args []string) error {
 		fmt.Fprintln(os.Stderr, "usage: mediatool clean [flags] <directory|file>")
 		return fmt.Errorf("clean needs exactly one directory or file argument")
 	}
-	target, err := cli.ResolveMediaTarget(fs.Arg(0), true)
+	var target string
+	var err error
+	if cfg.RemoveOld {
+		// the -old mode deletes backups, so the target may be a .old file
+		// (no media extension) as well as a directory
+		target, err = cli.ResolvePath(fs.Arg(0))
+	} else {
+		target, err = cli.ResolveMediaTarget(fs.Arg(0), true)
+	}
 	if err != nil {
 		return err
 	}
@@ -145,6 +155,9 @@ func countStreams(info *probe.Info) counts {
 }
 
 func (t *tool) runAll() error {
+	if t.cfg.RemoveOld {
+		return t.runOld()
+	}
 	soleNote := "kept even when not whitelisted"
 	if t.cfg.PurgeSole {
 		soleNote = "purged too (-e)"
@@ -208,6 +221,86 @@ func (t *tool) runAll() error {
 func (t *tool) skip(i, n int, path, reason string) {
 	t.rep.Skip(i, n, path, reason)
 	t.untouched++
+}
+
+// runOld removes the .old backup files of previous runs (-old mode): a
+// walk for .old files, honoring the ignore rules, with the usual dry run.
+func (t *tool) runOld() error {
+	kvs := []ui.KV{
+		ui.Pair("Mode", "remove .old backup files"),
+		ui.Pair("Ignore entries", strconv.Itoa(t.ignores.Len())),
+	}
+	if t.cfg.DryRun {
+		kvs = append(kvs, ui.Pair("Extra", "DRY RUN"))
+	}
+	t.rep.Header(kvs)
+
+	start := time.Now()
+	target := t.cfg.Target
+	info, err := os.Stat(target)
+	if err != nil {
+		return err
+	}
+	var files []string
+	if info.IsDir() {
+		if files, err = walk.OldFiles(target); err != nil {
+			return err
+		}
+	} else {
+		// single-file target: remove just that one backup
+		files = []string{target}
+	}
+	t.rep.Found(len(files))
+	for i, path := range files {
+		if t.ignores.Match(path) {
+			t.rep.Skip(i+1, len(files), path, "ignored")
+			t.untouched++
+			continue
+		}
+		t.removeOld(i+1, len(files), path)
+	}
+
+	t.rep.Summary("Done.", "Removed", "kept", ui.Outcome{
+		Done:     t.cleaned,
+		Skipped:  t.untouched,
+		Failed:   t.failed,
+		BytesIn:  t.bytesIn,
+		Failures: t.failures,
+		Elapsed:  time.Since(start),
+	})
+	if t.failed > 0 {
+		return fmt.Errorf("%d file(s) failed", t.failed)
+	}
+	return nil
+}
+
+// removeOld deletes one .old backup file. A single-file target that is not
+// a .old file is refused - only the tool's own backups are removable here.
+func (t *tool) removeOld(i, n int, path string) {
+	if !strings.HasSuffix(filepath.Base(path), ".old") {
+		t.rep.Skip(i, n, path, "not a .old file")
+		t.untouched++
+		return
+	}
+	st, err := os.Stat(path)
+	if err != nil {
+		t.fail(path, err.Error())
+		return
+	}
+	size := media.HumanBytes(st.Size())
+	if t.cfg.DryRun {
+		t.rep.Would("Would remove", i, n, path, size)
+		t.cleaned++
+		t.bytesIn += st.Size()
+		return
+	}
+	if err := os.Remove(path); err != nil {
+		t.fail(path, err.Error())
+		return
+	}
+	t.rep.Removed(i, n, path, size)
+	t.cleaned++
+	t.bytesIn += st.Size()
 }
 
 // TrackPlan is the audio/subtitle removal plan for one file under a

@@ -287,6 +287,19 @@ func (r *Reporter) status(s string) {
 	r.live = true
 }
 
+// Removed reports a file deleted from disk (clean -old): "Removed: <path>
+// (<size>)" plain, a green result line pretty. Removals are the
+// consequential lines of the -old mode and never collapse into the
+// quiet walking line.
+func (r *Reporter) Removed(i, n int, path, size string) {
+	r.close()
+	if !r.p.Interactive {
+		fmt.Fprintln(r.out, r.pal.Good(fmt.Sprintf("Removed: %s (%s)", path, size)))
+		return
+	}
+	fmt.Fprintf(r.out, "  %s %s%s %s %s\n", r.pal.Good(r.sym.Done), idx(i, n), path, r.dash(), size)
+}
+
 // Success closes the current file: "<verb>: <path> (<in> -> <out>,
 // backup: <backupPath>)" plain, a green result line replacing the bar
 // pretty. backupPath empty means the original was kept (no backup).
@@ -422,10 +435,16 @@ func (r *Reporter) Summary(lead, doneLabel, skipLabel string, o Outcome) {
 	if !r.p.Interactive {
 		fmt.Fprintln(r.out, r.pal.Dim(strings.Repeat("=", 42)))
 		var line string
+		// bytes without an output side mean pure deletions (clean -old):
+		// surface what the run freed instead of an in/out pair
+		freed := ""
+		if o.BytesIn > 0 && o.BytesOut == 0 {
+			freed = fmt.Sprintf(" (%s freed)", media.HumanBytes(o.BytesIn))
+		}
 		if skipLabel == "" {
-			line = fmt.Sprintf("%s %s: %d.", lead, doneLabel, o.Done)
+			line = fmt.Sprintf("%s %s: %d%s.", lead, doneLabel, o.Done, freed)
 		} else {
-			line = fmt.Sprintf("%s %s: %d, %s: %d, failed: %d.", lead, doneLabel, o.Done, skipLabel, o.Skipped, o.Failed)
+			line = fmt.Sprintf("%s %s: %d%s, %s: %d, failed: %d.", lead, doneLabel, o.Done, freed, skipLabel, o.Skipped, o.Failed)
 		}
 		if o.Failed > 0 {
 			fmt.Fprintln(r.out, r.pal.Bad(line))
@@ -448,6 +467,9 @@ func (r *Reporter) Summary(lead, doneLabel, skipLabel string, o Outcome) {
 			saved := 100 - int(o.BytesOut*100/o.BytesIn)
 			done += r.pal.Good(fmt.Sprintf("  (%s%d%%)", r.minus(), saved))
 		}
+	} else if o.BytesIn > 0 {
+		// pure deletions (clean -old): no in/out pair, just what was freed
+		done += r.pal.Good(fmt.Sprintf("  (%s freed)", media.HumanBytes(o.BytesIn)))
 	}
 	fmt.Fprintln(r.out, done)
 	if skipLabel != "" && o.Skipped > 0 {

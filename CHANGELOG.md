@@ -6,6 +6,11 @@
   creating a `.old` backup; the original is removed only after the new
   file is safely in place (the source's mtime still carries over). The
   run header shows the effective `Backups` setting.
+- **`clean -old`** — a deletion mode that removes the `.old` backup files
+  of previous runs instead of cleaning tracks: a recursive scan for
+  `*.old`, honoring the ignore rules and `-n`, single-file targets
+  allowed (non-backup files are refused). The summary reports the freed
+  space; removals never collapse into the quiet walking line.
 - **Clearer convert settings header** — the run header now spells out the
   full effective plan, defaults included, so a run is self-describing: a
   dedicated `Quality` line names the strategy (quality target, the

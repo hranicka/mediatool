@@ -61,6 +61,23 @@ func ResolveMediaTarget(arg string, allowFile bool) (string, error) {
 	return target, nil
 }
 
+// ResolvePath resolves a positional argument to an absolute,
+// symlink-resolved existing path of any kind (directory or file). Unlike
+// ResolveMediaTarget it imposes no media-extension rule.
+func ResolvePath(arg string) (string, error) {
+	target, err := filepath.Abs(arg)
+	if err != nil {
+		return "", fmt.Errorf("cannot resolve target: %w", err)
+	}
+	if resolved, linkErr := filepath.EvalSymlinks(target); linkErr == nil {
+		target = resolved
+	}
+	if _, err := os.Stat(target); err != nil {
+		return "", fmt.Errorf("target %s does not exist", target)
+	}
+	return target, nil
+}
+
 // IgnoresDir returns the directory where the ignore-file search starts:
 // the target's own directory for a single file (Load then walks up the
 // ancestor chain).

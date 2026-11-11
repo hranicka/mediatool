@@ -33,6 +33,27 @@ func IsMedia(ext string) bool {
 // sorted for a deterministic order. Unreadable subdirectories are logged
 // and skipped, not fatal (like find); only an unreadable root fails.
 func Media(dir string) ([]string, error) {
+	return walkAll(dir, func(path string, _ fs.DirEntry) bool {
+		return IsMedia(filepath.Ext(path))
+	})
+}
+
+// OldFiles returns the paths of .old backup files under dir (files whose
+// name ends in ".old", case-sensitive — the tool only ever creates
+// lowercase), excluding AppleDouble ._ files. The result is sorted for a
+// deterministic order. Unreadable subdirectories are logged and skipped,
+// not fatal (like find); only an unreadable root fails.
+func OldFiles(dir string) ([]string, error) {
+	return walkAll(dir, func(path string, _ fs.DirEntry) bool {
+		return strings.HasSuffix(filepath.Base(path), ".old")
+	})
+}
+
+// walkAll runs filepath.WalkDir over dir with the shared error policy and
+// collects the paths the matcher accepts, sorted and with AppleDouble ._
+// files excluded; unreadable subdirectories are logged and skipped, not
+// fatal (like find), only an unreadable root fails.
+func walkAll(dir string, match func(path string, d fs.DirEntry) bool) ([]string, error) {
 	var paths []string
 	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -49,7 +70,7 @@ func Media(dir string) ([]string, error) {
 		if strings.HasPrefix(base, "._") {
 			return nil
 		}
-		if IsMedia(filepath.Ext(path)) {
+		if match(path, d) {
 			paths = append(paths, path)
 		}
 		return nil
