@@ -635,7 +635,7 @@ func (t *tool) processFile(i, n int, path string) {
 			t.fail(outPath, fmt.Sprintf("cannot finalize %s: %v", outPath, err), "")
 			return
 		}
-		t.rep.Success("Created", outPath, 0, 0, false, time.Since(fileStart))
+		t.rep.Success("Created", outPath, 0, 0, "", time.Since(fileStart))
 		t.converted++
 		return
 	}
@@ -934,7 +934,7 @@ func (t *tool) verifyAndSwap(i, n int, path, tmp string, info *probe.Info, srcSi
 	if old, err := os.Stat(path + ".old"); err == nil {
 		os.Chtimes(path, old.ModTime(), old.ModTime())
 	}
-	t.rep.Success("Converted", path, srcSize, st.Size(), true, took)
+	t.rep.Success("Converted", path, srcSize, st.Size(), path+".old", took)
 	t.bytesIn += srcSize
 	t.bytesOut += st.Size()
 	t.converted++

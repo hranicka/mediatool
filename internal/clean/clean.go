@@ -367,7 +367,7 @@ func (t *tool) processFile(i, n int, path string) {
 		t.fail(path, err.Error())
 		return
 	}
-	t.rep.Success("Cleaned", path, srcSize, newSize, true, time.Since(fileStart))
+	t.rep.Success("Cleaned", path, srcSize, newSize, path+".old", time.Since(fileStart))
 	t.bytesIn += srcSize
 	t.bytesOut += newSize
 	t.cleaned++

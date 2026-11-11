@@ -288,12 +288,13 @@ func (r *Reporter) status(s string) {
 }
 
 // Success closes the current file: "<verb>: <path> (<in> -> <out>,
-// backup: <path>.old)" plain, a green result line replacing the bar
-// pretty. took is the per-file duration.
-func (r *Reporter) Success(verb, path string, inBytes, outBytes int64, backup bool, took time.Duration) {
+// backup: <backupPath>)" plain, a green result line replacing the bar
+// pretty. backupPath empty means the original was kept (no backup).
+// took is the per-file duration.
+func (r *Reporter) Success(verb, path string, inBytes, outBytes int64, backupPath string, took time.Duration) {
 	if !r.p.Interactive {
-		if backup {
-			fmt.Fprintln(r.out, r.pal.Good(fmt.Sprintf("%s: %s (%s -> %s, backup: %s.old)", verb, path, media.HumanBytes(inBytes), media.HumanBytes(outBytes), path)))
+		if backupPath != "" {
+			fmt.Fprintln(r.out, r.pal.Good(fmt.Sprintf("%s: %s (%s -> %s, backup: %s)", verb, path, media.HumanBytes(inBytes), media.HumanBytes(outBytes), backupPath)))
 			return
 		}
 		fmt.Fprintln(r.out, r.pal.Good(fmt.Sprintf("%s: %s (original kept)", verb, path)))

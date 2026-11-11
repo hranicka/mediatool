@@ -351,7 +351,7 @@ func (t *tool) processFile(i, n int, path string) {
 	if st, err := os.Stat(path); err == nil {
 		newSize = st.Size()
 	}
-	t.rep.Success("Converted", path, srcSize, newSize, true, time.Since(fileStart))
+	t.rep.Success("Converted", path, srcSize, newSize, path+".old", time.Since(fileStart))
 	t.bytesIn += srcSize
 	t.bytesOut += newSize
 	t.converted++

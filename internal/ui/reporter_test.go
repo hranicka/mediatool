@@ -57,8 +57,8 @@ func TestPlainEvents(t *testing.T) {
 	rep.Detail("HDR10 source: tonemapping to SDR bt709 (bt2390)")
 	rep.Attempt("Nvidia NVENC", "hw decode", 1, 3)
 	rep.AttemptFailed("hw decode", 1, 3)
-	rep.Success("Converted", "/e.mkv", 4500000000, 1900000000, true, 0)
-	rep.Success("Created", "/f.mkv", 0, 0, false, 0)
+	rep.Success("Converted", "/e.mkv", 4500000000, 1900000000, "/e.mkv.old", 0)
+	rep.Success("Created", "/f.mkv", 0, 0, "", 0)
 	rep.Fail("failed to convert /g.mkv (left untouched)", "")
 	rep.Raw(Neutral, "Testing encoder: %s...\n", "Nvidia NVENC")
 	rep.Note("  note: HDR10+ dynamic metadata will be dropped")
@@ -155,7 +155,7 @@ func TestPrettyEvents(t *testing.T) {
 
 	// success replaces the bar line
 	buf.Reset()
-	rep.Success("Converted", "/e.mkv", 1000, 500, true, 90*time.Second)
+	rep.Success("Converted", "/e.mkv", 1000, 500, "/e.mkv.old", 90*time.Second)
 	if got := buf.String(); !strings.HasPrefix(got, "\r\x1b[K  \x1b[32m✓") || !strings.Contains(got, "−50%") || !strings.Contains(got, "1m30s") {
 		t.Errorf("pretty success = %q", got)
 	}
@@ -259,8 +259,8 @@ func TestForcedColorKeepsPlainText(t *testing.T) {
 		rep.Detail("HDR10 source: kept")
 		rep.Attempt("NVENC", "hw", 1, 3)
 		rep.AttemptFailed("hw", 1, 3)
-		rep.Success("Converted", "/e.mkv", 1000, 500, true, 0)
-		rep.Success("Created", "/f.mkv", 0, 0, false, 0)
+		rep.Success("Converted", "/e.mkv", 1000, 500, "/e.mkv.old", 0)
+		rep.Success("Created", "/f.mkv", 0, 0, "", 0)
 		rep.Fail("failed to convert /g.mkv (left untouched)", "")
 		rep.Raw(WarnTone, "warning: %s\n", "deprecated")
 		rep.Summary("Done.", "Converted", "skipped", Outcome{Done: 1, Skipped: 1, Failed: 1})
