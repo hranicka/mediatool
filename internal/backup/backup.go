@@ -10,6 +10,13 @@ import (
 // existing backup. On failure the original is rolled back so nothing is
 // lost. Returns the backup path.
 func Swap(src, newFile string) (string, error) {
+	return SwapTo(src, newFile, src)
+}
+
+// SwapTo is Swap with a distinct destination: src moves to src.old and
+// newFile moves to dest (which may differ from src, e.g. when the output
+// container changes the extension). The backup keeps the source name.
+func SwapTo(src, newFile, dest string) (string, error) {
 	old := src + ".old"
 	if _, err := os.Stat(old); err == nil {
 		return "", fmt.Errorf("backup %s already exists", old)
@@ -17,7 +24,7 @@ func Swap(src, newFile string) (string, error) {
 	if err := os.Rename(src, old); err != nil {
 		return "", fmt.Errorf("cannot rename source file: %w", err)
 	}
-	if err := os.Rename(newFile, src); err != nil {
+	if err := os.Rename(newFile, dest); err != nil {
 		if rbErr := os.Rename(old, src); rbErr != nil {
 			return "", fmt.Errorf("cannot rename converted file: %w (rollback also failed: %v - original preserved as %s)", err, rbErr, old)
 		}

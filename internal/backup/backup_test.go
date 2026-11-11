@@ -80,3 +80,51 @@ func TestSwapRollsBack(t *testing.T) {
 		t.Error("rollback must remove the backup again")
 	}
 }
+
+func TestSwapToDifferentDest(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "movie.ts")
+	newFile := filepath.Join(dir, "movie.mkv.tmp")
+	dest := filepath.Join(dir, "movie.mkv")
+	if err := os.WriteFile(src, []byte("original"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(newFile, []byte("converted"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	bak, err := SwapTo(src, newFile, dest)
+	if err != nil {
+		t.Fatalf("SwapTo: %v", err)
+	}
+	if bak != src+".old" {
+		t.Errorf("backup path: got %s", bak)
+	}
+	if read(t, dest) != "converted" {
+		t.Errorf("dest should hold the new content, got %q", read(t, dest))
+	}
+	if read(t, src+".old") != "original" {
+		t.Errorf("backup should hold the original, got %q", read(t, src+".old"))
+	}
+	if _, err := os.Stat(src); err == nil {
+		t.Error("the source name must be gone (renamed to .old)")
+	}
+}
+
+func TestSwapToRollsBack(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "movie.ts")
+	if err := os.WriteFile(src, []byte("original"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := SwapTo(src, filepath.Join(dir, "does-not-exist"), filepath.Join(dir, "movie.mkv")); err == nil {
+		t.Fatal("expected error for missing new file")
+	}
+	if _, err := os.Stat(src); err != nil {
+		t.Errorf("original must be rolled back into place: %v", err)
+	}
+	if _, err := os.Stat(src + ".old"); err == nil {
+		t.Error("rollback must remove the backup again")
+	}
+}
