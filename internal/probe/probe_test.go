@@ -143,6 +143,27 @@ func TestProbeToleratesMissingObjects(t *testing.T) {
 	}
 }
 
+func TestRFrameRateInt(t *testing.T) {
+	cases := []struct {
+		in   string
+		want float64
+	}{
+		{"25/1", 25},
+		{"30000/1001", 30000.0 / 1001.0},
+		{"25", 25}, // no denominator
+		{"0/0", 0}, // ffprobe "unknown"
+		{"", 0},
+		{"garbage", 0},
+		{"-25/1", 0},
+		{"10/0", 0},
+	}
+	for _, c := range cases {
+		if got := (Stream{RFrameRate: c.in}).RFrameRateInt(); got != c.want {
+			t.Errorf("RFrameRateInt(%q) = %v, want %v", c.in, got, c.want)
+		}
+	}
+}
+
 func TestProbeArgs(t *testing.T) {
 	r := &fakeRunner{out: []byte(minimalJSON)}
 	_, _ = Probe(r, "ffprobe", "x.mkv")

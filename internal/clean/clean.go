@@ -487,8 +487,31 @@ func (t *tool) processFile(i, n int, path string) {
 	t.cleaned++
 }
 
-// gatesPass verifies duration, size and the exact planned stream counts of
-// the remuxed output; on failure it reports and leaves the original.
+// estimateFrames returns duration × fps of the first real (non-cover-art)
+// video stream — the worst-case frame count the remux index budget must
+// cover (0 when either is unknown).
+func estimateFrames(info *probe.Info) int64 {
+	dur := 0.0
+	if d, ok := info.Duration(); ok {
+		dur = d
+	}
+	if dur <= 0 {
+		return 0
+	}
+	for _, tv := range info.ByType()[probe.TypeVideo] {
+		if media.IsCoverArt(tv.Stream) {
+			continue
+		}
+		if fps := tv.Stream.RFrameRateInt(); fps > 0 {
+			return int64(dur * fps)
+		}
+	}
+	return 0
+}
+
+// gatesPass verifies duration, size (within the remux index budget) and
+// the exact planned stream counts of the remuxed output; on failure it
+// reports and leaves the original.
 func (t *tool) gatesPass(path, tmp string, info *probe.Info, srcSize int64, keep counts) bool {
 	newInfo, err := probe.Probe(t.r, t.ffprobeBin, tmp)
 	if err != nil {
@@ -506,7 +529,7 @@ func (t *tool) gatesPass(path, tmp string, info *probe.Info, srcSize int64, keep
 		t.fail(path, fmt.Sprintf("output is missing: %v", err))
 		return false
 	}
-	if !gates.Shrunk(st.Size(), srcSize) {
+	if !gates.WithinBudget(st.Size(), srcSize, gates.IndexBudget(estimateFrames(info))) {
 		t.fail(path, fmt.Sprintf("output is not smaller (%s -> %s) - keeping original", media.HumanBytes(srcSize), media.HumanBytes(st.Size())))
 		return false
 	}

@@ -32,3 +32,31 @@ func TestShrunk(t *testing.T) {
 		t.Error("bigger size must not count as shrunk")
 	}
 }
+
+func TestIndexBudget(t *testing.T) {
+	if got := IndexBudget(0); got != 64<<10 {
+		t.Errorf("IndexBudget(0) = %d, want the %d allowance", got, 64<<10)
+	}
+	// one index entry per frame plus the allowance
+	if got := IndexBudget(750); got != 64<<10+750*32 {
+		t.Errorf("IndexBudget(750) = %d, want %d", got, 64<<10+750*32)
+	}
+	if IndexBudget(-5) != 64<<10 {
+		t.Error("negative frames must fall back to the allowance")
+	}
+}
+
+func TestWithinBudget(t *testing.T) {
+	if !WithinBudget(100, 100, 50) {
+		t.Error("same size must stay within budget")
+	}
+	if !WithinBudget(150, 100, 50) {
+		t.Error("growth exactly at the budget must pass")
+	}
+	if WithinBudget(151, 100, 50) {
+		t.Error("growth beyond the budget must fail")
+	}
+	if !WithinBudget(50, 100, 50) {
+		t.Error("smaller size must pass")
+	}
+}

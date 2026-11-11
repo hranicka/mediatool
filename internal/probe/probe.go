@@ -60,6 +60,27 @@ func (s Stream) BitRateInt() int {
 	return n
 }
 
+// RFrameRateInt returns r_frame_rate as a frames-per-second number
+// (0 when missing or unparseable, e.g. "0/0").
+func (s Stream) RFrameRateInt() float64 {
+	numStr, denStr, slash := strings.Cut(s.RFrameRate, "/")
+	num, err := strconv.ParseFloat(numStr, 64)
+	if err != nil {
+		return 0
+	}
+	den := 1.0
+	if slash {
+		if den, err = strconv.ParseFloat(denStr, 64); err != nil || den == 0 {
+			return 0
+		}
+	}
+	fps := num / den
+	if fps <= 0 {
+		return 0
+	}
+	return fps
+}
+
 type Format struct {
 	// FormatName is the ffprobe container name list (e.g. "matroska,webm",
 	// "mov,mp4,m4a,3gp,3g2,mj2").

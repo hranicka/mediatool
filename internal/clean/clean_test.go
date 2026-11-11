@@ -2,6 +2,7 @@ package clean
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/hranicka/mediatool/internal/ignore"
 	"github.com/hranicka/mediatool/internal/media"
+	"github.com/hranicka/mediatool/internal/probe"
 	"github.com/hranicka/mediatool/internal/run"
 	"github.com/hranicka/mediatool/internal/ui"
 )
@@ -474,6 +476,83 @@ func TestCleanSizeGate(t *testing.T) {
 
 	if tl.failed != 1 || !strings.Contains(out.String(), "not smaller") {
 		t.Errorf("growing output must fail: %+v out=%s", tl, out.String())
+	}
+}
+
+// Regression: a cue-less source gains a full seek index in the remux, so
+// removing a tiny stream (cover art, a subtitle) can end up slightly
+// bigger than the source. Within the index budget the clean must still
+// succeed instead of failing on every run.
+func TestCleanIndexOverheadPasses(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "movie.mkv")
+	writeFile(t, src, 1_000_000)
+
+	ff := &fakeFF{probeFor: func(src string) (string, bool) {
+		if strings.HasSuffix(filepath.Base(src), ".tmp") {
+			return remuxJSON(1, 2), true
+		}
+		return libraryJSON(), true
+	}, remuxSize: 1_020_000} // index overhead ate the tiny removal savings
+	out := &bytes.Buffer{}
+	tl := newTestTool(t, dir, ff, &Config{Target: dir, Langs: "cs,en"}, out)
+	tl.processFile(1, 1, src)
+
+	if tl.cleaned != 1 || tl.failed != 0 {
+		t.Errorf("index overhead must not block the clean: %+v out=%s", tl, out.String())
+	}
+}
+
+// With a known frame rate the budget scales with the frame count; growth
+// beyond it still fails.
+func TestCleanSizeGateBeyondFrameBudget(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "movie.mkv")
+	writeFile(t, src, 1_000_000)
+
+	fpsJSON := fmt.Sprintf(`{"streams":[%s,%s,%s,%s],"format":{"duration":"600.0","size":"1000000","bit_rate":"8000000"}}`,
+		streamJSON("h264", "video", "", `"r_frame_rate":"25/1"`),
+		coverJSON(),
+		streamJSON("ac3", "audio", "ces", ""),
+		streamJSON("subrip", "subtitle", "ger", ""))
+	ff := &fakeFF{probeFor: func(src string) (string, bool) {
+		if strings.HasSuffix(filepath.Base(src), ".tmp") {
+			return remuxJSON(1, 0), true
+		}
+		return fpsJSON, true
+	}, remuxSize: 1_600_000} // beyond the allowance + 600s × 25fps × 32B
+	out := &bytes.Buffer{}
+	tl := newTestTool(t, dir, ff, &Config{Target: dir, Langs: "cs,en"}, out)
+	tl.processFile(1, 1, src)
+
+	if tl.failed != 1 || !strings.Contains(out.String(), "not smaller") {
+		t.Errorf("growth beyond the frame budget must fail: %+v out=%s", tl, out.String())
+	}
+}
+
+func TestEstimateFrames(t *testing.T) {
+	parse := func(s string) *probe.Info {
+		info := &probe.Info{}
+		if err := json.Unmarshal([]byte(s), info); err != nil {
+			t.Fatal(err)
+		}
+		return info
+	}
+	// duration × fps of the first real video; the cover art fps is skipped
+	info := parse(`{"streams":[
+		{"codec_name":"mjpeg","codec_type":"video","r_frame_rate":"25/1","disposition":{"attached_pic":1}},
+		{"codec_name":"h264","codec_type":"video","r_frame_rate":"30000/1001"},
+		{"codec_name":"ac3","codec_type":"audio"}],
+		"format":{"duration":"600.0"}}`)
+	if got := estimateFrames(info); got != 17982 {
+		t.Errorf("estimateFrames = %d, want 17982", got)
+	}
+	// unknown fps or missing duration -> 0 (allowance-only budget)
+	if got := estimateFrames(parse(`{"streams":[{"codec_name":"h264","codec_type":"video"}],"format":{"duration":"600.0"}}`)); got != 0 {
+		t.Errorf("missing fps must give 0, got %d", got)
+	}
+	if got := estimateFrames(parse(`{"streams":[{"codec_name":"h264","codec_type":"video","r_frame_rate":"25/1"}],"format":{}}`)); got != 0 {
+		t.Errorf("missing duration must give 0, got %d", got)
 	}
 }
 
