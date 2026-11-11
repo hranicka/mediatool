@@ -24,12 +24,7 @@ func findMatches(ref, dub [][vhash.HashLen]byte, window int) []frameMatch {
 	for j := range dub {
 		lo := max(0, prev-window)
 		hi := min(len(ref), prev+window+1)
-		best, bestDist := lo, -1
-		for k := lo; k < hi; k++ {
-			if d := vhash.Hamming(dub[j], ref[k]); bestDist < 0 || d < bestDist {
-				best, bestDist = k, d
-			}
-		}
+		best, bestDist := vhash.WindowBest(dub, ref, j, lo, hi, prev+1)
 		matches = append(matches, frameMatch{dub: j, ref: best, dist: bestDist})
 		prev = best
 	}

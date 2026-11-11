@@ -102,3 +102,26 @@ func Extract(r run.Runner, ffmpegBin, path string, interval float64) ([][HashLen
 	}
 	return out, nil
 }
+
+// WindowBest returns the position and distance of the best match of
+// a[j] within b[lo:hi). Distance ties prefer the position closest to
+// want — the natural continuation of the walk — so runs of near-identical
+// frames (static scenes, slow sources) advance instead of stalling at the
+// window's leading edge.
+func WindowBest(a, b [][HashLen]byte, j, lo, hi, want int) (int, int) {
+	best, bestDist := lo, Hamming(a[j], b[lo])
+	for k := lo + 1; k < hi; k++ {
+		if d := Hamming(a[j], b[k]); d < bestDist ||
+			(d == bestDist && abs(k-want) < abs(best-want)) {
+			best, bestDist = k, d
+		}
+	}
+	return best, bestDist
+}
+
+func abs(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
+}

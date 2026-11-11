@@ -42,13 +42,8 @@ func matchFraction(a, b [][vhash.HashLen]byte, window, maxBits int, minMatch flo
 		if hi > len(b) {
 			hi = len(b)
 		}
-		best, bestDist := lo, -1
-		for k := lo; k < hi; k++ {
-			if d := vhash.Hamming(a[j], b[k]); bestDist < 0 || d < bestDist {
-				best, bestDist = k, d
-			}
-		}
-		if bestDist >= 0 && bestDist <= maxBits {
+		best, bestDist := vhash.WindowBest(a, b, j, lo, hi, prev+1)
+		if bestDist <= maxBits {
 			matched++
 		}
 		// the walk continues from the best position even when unreliable,
