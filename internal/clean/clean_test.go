@@ -173,6 +173,36 @@ func TestCleanHappyPath(t *testing.T) {
 	}
 }
 
+func TestCleanNoBackup(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "movie.mkv")
+	writeFile(t, src, 1_000_000)
+
+	ff := &fakeFF{probeFor: func(src string) (string, bool) {
+		if strings.HasSuffix(filepath.Base(src), ".tmp") {
+			return remuxJSON(1, 2), true
+		}
+		return libraryJSON(), true
+	}, remuxSize: 500_000}
+	out := &bytes.Buffer{}
+	tl := newTestTool(t, dir, ff, &Config{Target: dir, Langs: "cs,en", NoBackup: true}, out)
+	tl.processFile(1, 1, src)
+
+	if tl.cleaned != 1 || tl.failed != 0 {
+		t.Fatalf("counters: cleaned=%d failed=%d out=%s", tl.cleaned, tl.failed, out.String())
+	}
+	if _, err := os.Stat(src + ".old"); err == nil {
+		t.Error("-no-backup must not create a backup")
+	}
+	st, err := os.Stat(src)
+	if err != nil {
+		t.Fatalf("replacement missing: %v", err)
+	}
+	if st.Size() != 500_000 {
+		t.Errorf("original not replaced in place: size %d, want 500000", st.Size())
+	}
+}
+
 func TestCleanDryRunPlan(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "movie.mkv")

@@ -32,6 +32,7 @@ type Config struct {
 	PurgeSole bool
 	Ignores   []string
 	DryRun    bool
+	NoBackup  bool
 	Verbose   bool
 }
 
@@ -58,6 +59,15 @@ func (t *tool) fail(path, msg string) {
 	t.failed++
 }
 
+// swap puts the new file in place, honoring -no-backup. Returns the backup
+// path (empty when the original was removed instead).
+func (t *tool) swap(path, tmp string) (string, error) {
+	if t.cfg.NoBackup {
+		return "", backup.Replace(path, tmp)
+	}
+	return backup.Swap(path, tmp)
+}
+
 // Run executes the clean subcommand.
 func Run(args []string) error {
 	fs := flag.NewFlagSet("clean", flag.ExitOnError)
@@ -67,6 +77,7 @@ func Run(args []string) error {
 	fs.BoolVar(&cfg.PurgeSole, "e", false, "purge even the only track of its type when its language is not whitelisted")
 	fs.Var(cli.Ignores{Dst: &cfg.Ignores}, "i", "comma-separated substrings to ignore (also read from the dot ignore files)")
 	fs.BoolVar(&cfg.DryRun, "n", false, "dry run: list what would be removed")
+	fs.BoolVar(&cfg.NoBackup, "no-backup", false, "replace files in place without keeping .old backups (the originals are removed)")
 	fs.BoolVar(&verbose, "v", false, "verbose/debug output")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -138,10 +149,15 @@ func (t *tool) runAll() error {
 	if t.cfg.PurgeSole {
 		soleNote = "purged too (-e)"
 	}
+	backupNote := "keep .old"
+	if t.cfg.NoBackup {
+		backupNote = "none (-no-backup)"
+	}
 	kvs := []ui.KV{
 		ui.Pair("FFmpeg binary", t.ffmpegBin),
 		ui.Pair("Keep languages", strings.Join(t.whitelist, " ")+" (+ no/und tags)"),
 		ui.Pair("Sole tracks", soleNote),
+		ui.Pair("Backups", backupNote),
 		ui.Pair("Ignore entries", strconv.Itoa(t.ignores.Len())),
 	}
 	if t.cfg.DryRun {
@@ -363,11 +379,16 @@ func (t *tool) processFile(i, n int, path string) {
 	if st, err := os.Stat(tmp); err == nil {
 		newSize = st.Size()
 	}
-	if _, err := backup.Swap(path, tmp); err != nil {
+	backupPath, err := t.swap(path, tmp)
+	if err != nil {
 		t.fail(path, err.Error())
 		return
 	}
-	t.rep.Success("Cleaned", path, srcSize, newSize, path+".old", time.Since(fileStart))
+	if t.cfg.NoBackup {
+		t.rep.SuccessNoBackup("Cleaned", path, srcSize, newSize, time.Since(fileStart))
+	} else {
+		t.rep.Success("Cleaned", path, srcSize, newSize, backupPath, time.Since(fileStart))
+	}
 	t.bytesIn += srcSize
 	t.bytesOut += newSize
 	t.cleaned++

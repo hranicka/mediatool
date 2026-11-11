@@ -128,3 +128,69 @@ func TestSwapToRollsBack(t *testing.T) {
 		t.Error("rollback must remove the backup again")
 	}
 }
+
+func TestReplace(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "movie.mkv")
+	newFile := filepath.Join(dir, "movie.mkv.tmp")
+	if err := os.WriteFile(src, []byte("original"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(newFile, []byte("converted"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Replace(src, newFile); err != nil {
+		t.Fatalf("Replace: %v", err)
+	}
+	if read(t, src) != "converted" {
+		t.Errorf("src should hold the new content, got %q", read(t, src))
+	}
+	if _, err := os.Stat(src + ".old"); err == nil {
+		t.Error("no backup must be created")
+	}
+	if _, err := os.Stat(newFile); err == nil {
+		t.Error("the temp file must be gone (moved onto src)")
+	}
+}
+
+func TestReplaceToDifferentDest(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "movie.ts")
+	newFile := filepath.Join(dir, "movie.mkv.tmp")
+	dest := filepath.Join(dir, "movie.mkv")
+	if err := os.WriteFile(src, []byte("original"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(newFile, []byte("converted"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ReplaceTo(src, newFile, dest); err != nil {
+		t.Fatalf("ReplaceTo: %v", err)
+	}
+	if read(t, dest) != "converted" {
+		t.Errorf("dest should hold the new content, got %q", read(t, dest))
+	}
+	if _, err := os.Stat(src); err == nil {
+		t.Error("the original must be removed")
+	}
+	if _, err := os.Stat(src + ".old"); err == nil {
+		t.Error("no backup must be created")
+	}
+}
+
+func TestReplaceKeepsOriginalOnFailure(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "movie.mkv")
+	if err := os.WriteFile(src, []byte("original"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Replace(src, filepath.Join(dir, "does-not-exist")); err == nil {
+		t.Fatal("expected error for missing new file")
+	}
+	if _, err := os.Stat(src); err != nil {
+		t.Errorf("original must stay untouched when the rename fails: %v", err)
+	}
+}

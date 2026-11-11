@@ -205,6 +205,39 @@ func TestConvertHappyPath(t *testing.T) {
 	}
 }
 
+func TestConvertNoBackup(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "movie.mkv")
+	writeFile(t, src, 1_000_000)
+	before := time.Now().Add(-time.Minute)
+	if err := os.Chtimes(src, before, before); err != nil {
+		t.Fatal(err)
+	}
+
+	ff := &fakeFF{probeFor: jsonFor(600.0), encSize: 500_000}
+	out := &bytes.Buffer{}
+	tl := newTestTool(t, dir, ff, &Config{Dir: dir, Mode: encoders.ModeMovie, CQ: 26, NoBackup: true}, out)
+	tl.processFile(1, 1, src)
+
+	if tl.converted != 1 || tl.skipped != 0 || tl.failed != 0 {
+		t.Fatalf("counters: %+v (out: %s)", tl, out.String())
+	}
+	if _, err := os.Stat(src + ".old"); err == nil {
+		t.Error("-no-backup must not create a backup")
+	}
+	st, err := os.Stat(src)
+	if err != nil {
+		t.Fatalf("replacement missing: %v", err)
+	}
+	if st.Size() != 500_000 {
+		t.Errorf("original not replaced in place: size %d, want 500000", st.Size())
+	}
+	// the mtime of the removed source must carry over to the replacement
+	if !st.ModTime().Equal(before) {
+		t.Errorf("replacement mtime %v, want the source's %v", st.ModTime(), before)
+	}
+}
+
 func TestConvertCoverArtNegativeMap(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "movie.mkv")
@@ -834,6 +867,7 @@ func TestPlainOutputGolden(t *testing.T) {
 			"Tonemap       : off (keep HDR)",
 			"Audio target  : copy",
 			"Languages     : all",
+			"Backups       : keep .old",
 			"Target        : " + dir,
 			"Ignore entries: 1",
 			strings.Repeat("=", 42),
@@ -871,6 +905,7 @@ func TestPlainOutputGolden(t *testing.T) {
 			"Tonemap       : off (keep HDR)",
 			"Audio target  : copy",
 			"Languages     : all",
+			"Backups       : keep .old",
 			"Target        : " + dir,
 			"Ignore entries: 1",
 			"Extra         : DRY RUN",

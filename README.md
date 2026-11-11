@@ -177,7 +177,10 @@ the search starts at the file's directory), so an ignore file in `/foo` or
 
 - **`.old` backups**: in-place replacements never clobber an existing
   `<file>.old` — convert skips such files up front; clean and ac3 refuse
-  the swap and keep the original when one exists.
+  the swap and keep the original when one exists. Pass `-no-backup` to
+  convert/clean/ac3 to replace files in place without creating a backup
+  (the original is removed; `mediatool clean -old` removes the backups
+  a previous run left behind).
 - **Safety gates**: outputs are adopted only after duration, size and
   stream-count checks.
 - **Dry run**: every modifying command accepts `-n` and prints its plan.

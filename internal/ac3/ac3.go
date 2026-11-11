@@ -34,6 +34,7 @@ type Config struct {
 	GateLang string
 	Ignores  []string
 	DryRun   bool
+	NoBackup bool
 	Verbose  bool
 }
 
@@ -59,6 +60,15 @@ func (t *tool) fail(path, msg string) {
 	t.failed++
 }
 
+// swap puts the converted file in place, honoring -no-backup. Returns the
+// backup path (empty when the original was removed instead).
+func (t *tool) swap(path, tmp string) (string, error) {
+	if t.cfg.NoBackup {
+		return "", backup.Replace(path, tmp)
+	}
+	return backup.Swap(path, tmp)
+}
+
 // Run executes the ac3 subcommand.
 func Run(args []string) error {
 	fs := flag.NewFlagSet("ac3", flag.ExitOnError)
@@ -68,6 +78,7 @@ func Run(args []string) error {
 	fs.StringVar(&cfg.GateLang, "l", "", "only process files containing at least one audio track of this language")
 	fs.Var(cli.Ignores{Dst: &cfg.Ignores}, "i", "comma-separated substrings to ignore (also read from the dot ignore files)")
 	fs.BoolVar(&cfg.DryRun, "n", false, "dry run: list what would be converted")
+	fs.BoolVar(&cfg.NoBackup, "no-backup", false, "replace files in place without keeping .old backups (the originals are removed)")
 	fs.BoolVar(&verbose, "v", false, "verbose/debug output")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -120,6 +131,11 @@ func (t *tool) runAll() error {
 	if t.cfg.GateLang != "" {
 		kvs = append(kvs, ui.Pair("Language gate", t.cfg.GateLang))
 	}
+	backupNote := "keep .old"
+	if t.cfg.NoBackup {
+		backupNote = "none (-no-backup)"
+	}
+	kvs = append(kvs, ui.Pair("Backups", backupNote))
 	kvs = append(kvs, ui.Pair("Ignore entries", strconv.Itoa(t.ignores.Len())))
 	if t.cfg.DryRun {
 		kvs = append(kvs, ui.Pair("Extra", "DRY RUN"))
@@ -343,7 +359,8 @@ func (t *tool) processFile(i, n int, path string) {
 		return
 	}
 
-	if _, err := backup.Swap(path, tmp); err != nil {
+	backupPath, err := t.swap(path, tmp)
+	if err != nil {
 		t.fail(path, err.Error())
 		return
 	}
@@ -351,7 +368,11 @@ func (t *tool) processFile(i, n int, path string) {
 	if st, err := os.Stat(path); err == nil {
 		newSize = st.Size()
 	}
-	t.rep.Success("Converted", path, srcSize, newSize, path+".old", time.Since(fileStart))
+	if t.cfg.NoBackup {
+		t.rep.SuccessNoBackup("Converted", path, srcSize, newSize, time.Since(fileStart))
+	} else {
+		t.rep.Success("Converted", path, srcSize, newSize, backupPath, time.Since(fileStart))
+	}
 	t.bytesIn += srcSize
 	t.bytesOut += newSize
 	t.converted++

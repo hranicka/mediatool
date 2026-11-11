@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **`-no-backup` for convert/clean/ac3** — replaces files in place without
+  creating a `.old` backup; the original is removed only after the new
+  file is safely in place (the source's mtime still carries over). The
+  run header shows the effective `Backups` setting.
 - **Clearer convert settings header** — the run header now spells out the
   full effective plan, defaults included, so a run is self-describing: a
   dedicated `Quality` line names the strategy (quality target, the

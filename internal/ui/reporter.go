@@ -300,6 +300,23 @@ func (r *Reporter) Success(verb, path string, inBytes, outBytes int64, backupPat
 		fmt.Fprintln(r.out, r.pal.Good(fmt.Sprintf("%s: %s (original kept)", verb, path)))
 		return
 	}
+	r.successBar(inBytes, outBytes, took)
+}
+
+// SuccessNoBackup closes the current file for -no-backup runs: the plain
+// rendering says "(no backup)" because the original was removed, not kept.
+// The pretty rendering matches Success.
+func (r *Reporter) SuccessNoBackup(verb, path string, inBytes, outBytes int64, took time.Duration) {
+	if !r.p.Interactive {
+		fmt.Fprintln(r.out, r.pal.Good(fmt.Sprintf("%s: %s (%s -> %s, no backup)", verb, path, media.HumanBytes(inBytes), media.HumanBytes(outBytes))))
+		return
+	}
+	r.successBar(inBytes, outBytes, took)
+}
+
+// successBar renders the shared pretty result line: sizes, saved percent
+// and per-file duration, replacing the progress bar.
+func (r *Reporter) successBar(inBytes, outBytes int64, took time.Duration) {
 	line := fmt.Sprintf("  %s %s %s %s", r.pal.Good(r.sym.Done), media.HumanBytes(inBytes), r.pal.Dim(r.sym.Arrow), media.HumanBytes(outBytes))
 	if inBytes > 0 && outBytes > 0 && outBytes < inBytes {
 		saved := 100 - int(outBytes*100/inBytes)

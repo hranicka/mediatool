@@ -68,6 +68,7 @@ type Config struct {
 	Ignores     []string
 	Force       bool
 	DryRun      bool
+	NoBackup    bool
 	Verbose     bool
 	VaapiDevice string
 }
@@ -134,6 +135,7 @@ func Run(args []string) error {
 	fs.Var(cli.Ignores{Dst: &cfg.Ignores}, "i", "comma-separated substrings to ignore (also read from the dot ignore files)")
 	fs.BoolVar(&cfg.Force, "f", false, "force re-encoding of sources that are not H.264")
 	fs.BoolVar(&cfg.DryRun, "n", false, "dry run: list what would be done")
+	fs.BoolVar(&cfg.NoBackup, "no-backup", false, "replace files in place without keeping .old backups (the originals are removed)")
 	fs.BoolVar(&verbose, "v", false, "verbose/debug output")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -354,6 +356,14 @@ func (t *tool) runAll() error {
 		ui.Pair("Audio target", t.audio.desc()),
 		ui.Pair("Languages", langs),
 	)
+	if cfg.Mode != encoders.ModeChromecast {
+		// chromecast writes new _CC4_FIXED.mkv files instead of swapping
+		backupNote := "keep .old"
+		if cfg.NoBackup {
+			backupNote = "none (-no-backup)"
+		}
+		kvs = append(kvs, ui.Pair("Backups", backupNote))
+	}
 	if cfg.Force {
 		kvs = append(kvs, ui.Pair("Force", "re-encode non-H.264 sources too"))
 	}
@@ -489,10 +499,12 @@ func (t *tool) processFile(i, n int, path string) {
 		}
 		outFmt = "matroska"
 	default:
-		backupPath := path + ".old"
-		if _, err := os.Stat(backupPath); err == nil {
-			t.skip(i, n, path, fmt.Sprintf("backup %s already exists", backupPath))
-			return
+		if !cfg.NoBackup {
+			backupPath := path + ".old"
+			if _, err := os.Stat(backupPath); err == nil {
+				t.skip(i, n, path, fmt.Sprintf("backup %s already exists", backupPath))
+				return
+			}
 		}
 		if !convertibleSource(v.CodecName) && !cfg.Force {
 			t.skip(i, n, path, fmt.Sprintf("video codec is '%s', not convertible (want h264 or vc1)", v.CodecName))
@@ -941,8 +953,9 @@ func sourceVideoKbps(v probe.Stream, info *probe.Info, srcSize int64) int {
 }
 
 // verifyAndSwap applies the safety gates and swaps the file in place with a
-// .old backup. outPath is the final name (it differs from path when the
-// output container changes the extension); the backup keeps the source name.
+// .old backup (or removes the original outright under -no-backup). outPath
+// is the final name (it differs from path when the output container changes
+// the extension); the backup keeps the source name.
 func (t *tool) verifyAndSwap(i, n int, path, outPath, tmp string, info *probe.Info, srcSize int64, gate streamGate, took time.Duration) {
 	srcDur, srcOK := info.Duration()
 	tmpInfo, err := probe.Probe(t.r, t.ffprobeBin, tmp)
@@ -981,15 +994,32 @@ func (t *tool) verifyAndSwap(i, n int, path, outPath, tmp string, info *probe.In
 		return
 	}
 
-	if _, err := backup.SwapTo(path, tmp, outPath); err != nil {
-		t.fail(path, err.Error(), "")
+	// hevc-convert.sh parity: the replacement keeps the source's mtime
+	// (read from the source before the swap; a -no-backup run has no .old)
+	var srcMod time.Time
+	if si, err := os.Stat(path); err == nil {
+		srcMod = si.ModTime()
+	}
+	backupPath := path + ".old"
+	var swapErr error
+	if t.cfg.NoBackup {
+		backupPath = ""
+		swapErr = backup.ReplaceTo(path, tmp, outPath)
+	} else {
+		_, swapErr = backup.SwapTo(path, tmp, outPath)
+	}
+	if swapErr != nil {
+		t.fail(path, swapErr.Error(), "")
 		return
 	}
-	// hevc-convert.sh parity: the replacement keeps the source's mtime
-	if old, err := os.Stat(path + ".old"); err == nil {
-		os.Chtimes(outPath, old.ModTime(), old.ModTime())
+	if !srcMod.IsZero() {
+		os.Chtimes(outPath, srcMod, srcMod)
 	}
-	t.rep.Success("Converted", outPath, srcSize, st.Size(), path+".old", took)
+	if t.cfg.NoBackup {
+		t.rep.SuccessNoBackup("Converted", outPath, srcSize, st.Size(), took)
+	} else {
+		t.rep.Success("Converted", outPath, srcSize, st.Size(), backupPath, took)
+	}
 	t.bytesIn += srcSize
 	t.bytesOut += st.Size()
 	t.converted++

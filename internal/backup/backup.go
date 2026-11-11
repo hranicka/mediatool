@@ -1,4 +1,5 @@
-// Package backup swaps converted files in place keeping a .old backup.
+// Package backup swaps converted files in place, keeping a .old backup
+// (Swap/SwapTo) or removing the original outright (Replace/ReplaceTo).
 package backup
 
 import (
@@ -11,6 +12,30 @@ import (
 // lost. Returns the backup path.
 func Swap(src, newFile string) (string, error) {
 	return SwapTo(src, newFile, src)
+}
+
+// Replace swaps newFile in place of src removing the original - no .old
+// backup is created. When dest is a distinct name the original is only
+// removed after the new file is safely in place.
+func Replace(src, newFile string) error {
+	return ReplaceTo(src, newFile, src)
+}
+
+// ReplaceTo is Replace with a distinct destination: newFile moves to dest
+// (which may differ from src, e.g. when the output container changes the
+// extension) and src is removed. The rename happens first, so a failure
+// leaves the original untouched.
+func ReplaceTo(src, newFile, dest string) error {
+	if err := os.Rename(newFile, dest); err != nil {
+		return fmt.Errorf("cannot rename converted file: %w", err)
+	}
+	if src == dest {
+		return nil
+	}
+	if err := os.Remove(src); err != nil {
+		return fmt.Errorf("cannot remove original %s (the new file is in place at %s): %w", src, dest, err)
+	}
+	return nil
 }
 
 // SwapTo is Swap with a distinct destination: src moves to src.old and

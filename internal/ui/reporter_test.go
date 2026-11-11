@@ -86,6 +86,15 @@ func TestPlainEvents(t *testing.T) {
 	}
 }
 
+func TestPlainSuccessNoBackup(t *testing.T) {
+	rep, buf := plain()
+	rep.SuccessNoBackup("Converted", "/e.mkv", 4500000000, 1900000000, 0)
+	want := "Converted: /e.mkv (4.2G -> 1.8G, no backup)\n"
+	if got := buf.String(); got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
 func TestPlainSummary(t *testing.T) {
 	rep, buf := plain()
 	rep.Summary("Done.", "Converted", "skipped", Outcome{Done: 38, Skipped: 3, Failed: 1})

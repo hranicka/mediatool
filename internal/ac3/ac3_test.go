@@ -162,6 +162,36 @@ func TestAC3HappyPath(t *testing.T) {
 	}
 }
 
+func TestAC3NoBackup(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "movie.mkv")
+	writeFile(t, src, 1_000_000)
+
+	ff := &fakeFF{probeFor: func(src string) (string, bool) {
+		if strings.HasSuffix(filepath.Base(src), ".tmp") {
+			return remuxJSON(5, 3), true
+		}
+		return mixedJSON(), true
+	}, encSize: 1_200_000}
+	out := &bytes.Buffer{}
+	tl := newTestTool(t, dir, ff, &Config{Target: dir, MinBR: 448000, NoBackup: true}, out)
+	tl.processFile(1, 1, src)
+
+	if tl.converted != 1 || tl.failed != 0 {
+		t.Fatalf("counters: converted=%d failed=%d out=%s", tl.converted, tl.failed, out.String())
+	}
+	if _, err := os.Stat(src + ".old"); err == nil {
+		t.Error("-no-backup must not create a backup")
+	}
+	st, err := os.Stat(src)
+	if err != nil {
+		t.Fatalf("replacement missing: %v", err)
+	}
+	if st.Size() != 1_200_000 {
+		t.Errorf("original not replaced in place: size %d, want 1200000", st.Size())
+	}
+}
+
 func TestAC3ValidTrackSkips(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "valid.mkv")

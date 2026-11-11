@@ -30,8 +30,9 @@ Commands:
   version   print the version
 
 Library-touching commands work on a directory (or a single file where noted),
-honor the dot ignore files in the target directory, keep .old backups and
-support a dry run. Run "mediatool <command> -h" for details.
+honor the dot ignore files in the target directory, keep .old backups
+(-no-backup opts out) and support a dry run. Run "mediatool <command> -h"
+for details.
 `
 
 func main() {
