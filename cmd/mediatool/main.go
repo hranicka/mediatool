@@ -10,6 +10,7 @@ import (
 	"github.com/hranicka/mediatool/internal/ac3"
 	"github.com/hranicka/mediatool/internal/clean"
 	"github.com/hranicka/mediatool/internal/convert"
+	"github.com/hranicka/mediatool/internal/dedup"
 	"github.com/hranicka/mediatool/internal/dup"
 	"github.com/hranicka/mediatool/internal/enhance"
 )
@@ -26,6 +27,7 @@ Commands:
   clean     remove audio/subtitle tracks of non-whitelisted languages
   ac3       append AC3 compatibility tracks for DTS/TrueHD/FLAC audio
   dup       report duplicate audio tracks (read-only)
+  dedup     report content duplicates across files (read-only)
   enhance   AI-upscale with Real-ESRGAN and re-encode to HEVC 1080p
   version   print the version
 
@@ -51,6 +53,8 @@ func main() {
 		err = ac3.Run(os.Args[2:])
 	case "dup":
 		err = dup.Run(os.Args[2:])
+	case "dedup":
+		err = dedup.Run(os.Args[2:])
 	case "enhance":
 		err = enhance.Run(os.Args[2:])
 	case "version":

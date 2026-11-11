@@ -17,8 +17,8 @@ var sharedFiles = []string{".mediatool-ignore"}
 
 // commandFiles are the per-command ignore lists: a path can be excluded
 // from one command (e.g. "not to clean") while still being processed by
-// the others (e.g. re-encode). dup is absent on purpose — it is a
-// read-only report, so only the shared file and -i apply.
+// the others (e.g. re-encode). dup and dedup are absent on purpose — they
+// are read-only reports, so only the shared file and -i apply.
 var commandFiles = map[string]string{
 	"convert": ".mediatool-convert-ignore",
 	"clean":   ".mediatool-clean-ignore",

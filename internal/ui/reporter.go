@@ -267,6 +267,17 @@ func (r *Reporter) Progress(elapsed time.Duration, speed string) {
 	r.status(truncate(line, r.p.Width, r.p.UTF8))
 }
 
+// Phase shows a live in-place line for work between per-file events
+// (dedup probing/signature hashing); a no-op when redirected, where the
+// phases simply produce no output until their results print. The next
+// event line erases it.
+func (r *Reporter) Phase(format string, args ...any) {
+	if !r.p.Interactive {
+		return
+	}
+	r.status(r.pal.Dim(truncate(fmt.Sprintf(format, args...), r.p.Width, r.p.UTF8)))
+}
+
 // DownloadProgress redraws the live line for a running byte download
 // (total 0 = unknown); a no-op outside interactive mode.
 func (r *Reporter) DownloadProgress(label string, done, total int64) {

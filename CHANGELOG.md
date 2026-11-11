@@ -11,6 +11,16 @@
   `*.old`, honoring the ignore rules and `-n`, single-file targets
   allowed (non-backup files are refused). The summary reports the freed
   space; removals never collapse into the quiet walking line.
+- **`dedup`** — a new read-only content-duplicate report: finds files that
+  carry the same movie/episode across encodes, sizes, extensions and
+  names (`.old` backups excluded). Samples a frame every `-interval`
+  seconds, perceptually hashes each one (median-threshold grayscale,
+  robust against encoder noise and resolution changes) and matches the
+  sequences with a windowed walk tolerant to shifted starts, cut scenes
+  and framerate variants. A duration prefilter keeps frame extraction to
+  files with at least one duration-compatible peer. Groups print with a
+  suggested keeper (highest resolution, then the larger file) and the
+  reclaimable space; deletion stays manual.
 - **Clearer convert settings header** — the run header now spells out the
   full effective plan, defaults included, so a run is self-describing: a
   dedicated `Quality` line names the strategy (quality target, the

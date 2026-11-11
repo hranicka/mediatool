@@ -147,6 +147,30 @@ mediatool dup [-i list] <dir>
 Read-only report of audio tracks sharing codec, bitrate, channel count and
 language tag within one file. Useful before `clean`.
 
+### dedup
+
+```
+mediatool dedup [-interval 2] [-min-match 0.8] [-max-dist 0.15] [-tolerance 5] [-i list] <dir>
+```
+
+Read-only report of media files that carry the **same content** across the
+library — different encodes, sizes, extensions or names of one movie or
+episode, `.old` backups excluded. Instead of hashing files, it samples a
+frame every `-interval` seconds (downscaled grayscale), perceptually hashes
+each one (median-threshold, robust against encoder noise, brightness
+shifts and resolution changes) and matches the sequences with a windowed
+walk, so shifted starts, cut scenes and framerate variants are tolerated.
+
+Only files whose durations are within `-tolerance` percent (10 s floor)
+are compared, so most of the library never pays for frame extraction; a
+pair matches when at least `-min-match` of the frames match reliably
+(hamming distance ≤ `-max-dist` of the hash bits). Output groups the
+matches, marks the suggested keeper (highest resolution, then the larger
+file) and totals the reclaimable space — deletion stays manual.
+
+Frame extraction decodes the whole file, so expect the hashing phase to
+run a while for large libraries; everything else is cheap.
+
 ### enhance
 
 ```
