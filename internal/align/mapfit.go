@@ -50,6 +50,10 @@ const (
 	// globalResidual is the largest median residual (seconds) a single
 	// global fit may have to replace a fragmented piecewise map.
 	globalResidual = 0.75
+	// minRemainingRatio is the smallest reference/dub duration ratio that a
+	// resync candidate may leave. A jump that leaves far less reference than
+	// the dub still to play is a repeated late shot, not the continuation.
+	minRemainingRatio = 0.25
 	// slope bounds for a plausible timing segment. Real edits land at
 	// 1.0 (same speed) and 1.043 (PAL speedup).
 	slopeMin = 0.5
@@ -300,7 +304,11 @@ func resyncMatch(ref, dub [][vhash.HashLen]byte, j, prev, matchDist int, interva
 		return 0, 0, false
 	}
 	confirm := max(3, int(math.Ceil(1.0/interval)))
+	remainingDub := float64(len(dub)-j) * interval
 	for k := prev; k < len(ref); k++ {
+		if float64(len(ref)-k)*interval < minRemainingRatio*remainingDub {
+			break
+		}
 		d := vhash.Hamming(dub[j], ref[k])
 		if d >= matchDist {
 			continue
@@ -312,11 +320,14 @@ func resyncMatch(ref, dub [][vhash.HashLen]byte, j, prev, matchDist int, interva
 	return 0, 0, false
 }
 
-// confirmMatch reports whether ref[r:] continues to match dub[j:] for up
-// to confirm frames, allowing one frame of slack for framerate drift.
+// confirmMatch reports whether ref[r:] continues to match dub[j:] for the
+// requested number of frames, allowing one frame of slack for framerate
+// drift. A short confirmation is enough to follow a continuous run; a jump
+// needs the longer run so a repeated shot cannot hijack the walk.
 func confirmMatch(ref, dub [][vhash.HashLen]byte, j, r, matchDist, confirm int) bool {
+	want := min(confirm, len(dub)-j)
 	ok := 0
-	for k := 0; k < confirm && j+k < len(dub) && r+k < len(ref); k++ {
+	for k := 0; k < want && r+k < len(ref); k++ {
 		bestD := vhash.Hamming(dub[j+k], ref[r+k])
 		if r+k > 0 {
 			bestD = min(bestD, vhash.Hamming(dub[j+k], ref[r+k-1]))
@@ -329,7 +340,7 @@ func confirmMatch(ref, dub [][vhash.HashLen]byte, j, r, matchDist, confirm int) 
 		}
 		ok++
 	}
-	return ok >= min(3, len(dub)-j)
+	return ok == want
 }
 
 // buildTimingMap turns reliable frame matches into a piecewise (segmented)

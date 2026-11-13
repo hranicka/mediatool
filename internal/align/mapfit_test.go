@@ -316,6 +316,40 @@ func TestBuildTimingMapMissingScene(t *testing.T) {
 	}
 }
 
+func TestBuildTimingMapLateDuplicateDoesNotHijack(t *testing.T) {
+	// A repeated shot near the end of the reference must not pull the walk
+	// forward while most of the dub still has to be mapped. The failure was
+	// silent: the walk jumped to the duplicate, then found nothing for the
+	// remaining minutes.
+	const interval = 0.05
+	ref := hashesOf(0, 2400)  // 120 s
+	dub := hashesOf(10, 2000) // 100 s, ref = dub + 0.5 s
+	// The true content is unhashable for 5 s in the middle...
+	rng := rand.New(rand.NewSource(7))
+	for i := 1020; i < 1120; i++ {
+		rng.Read(ref[i][:])
+	}
+	// ...while a duplicate of that same moment sits near the end of the
+	// reference and matches immediately.
+	copy(ref[2200:2300], dub[1000:1100])
+
+	matches := findMatches(ref, dub, 40, 45, interval)
+	tm, err := buildTimingMap(matches, interval, 120, 100, 45)
+	if err != nil {
+		t.Fatalf("buildTimingMap: %v", err)
+	}
+	if tm.DubCoverage < 0.85 {
+		t.Fatalf("dub coverage %.2f: the walk was hijacked by the late duplicate (%d segments)", tm.DubCoverage, len(tm.Segments))
+	}
+	last := tm.Segments[len(tm.Segments)-1]
+	if last.DubEnd < 99 {
+		t.Errorf("dub tail not mapped: last dubbed end %.1f, want about 100", last.DubEnd)
+	}
+	if last.RefEnd < 100 || last.RefEnd > 101 {
+		t.Errorf("last reference end %.1f, want about 100.5", last.RefEnd)
+	}
+}
+
 func TestBuildTimingMapExtraScene(t *testing.T) {
 	// the dub inserts 15 s of unrelated content at 10 s: the insert is
 	// dropped and the reference stays continuous (no false silence)
