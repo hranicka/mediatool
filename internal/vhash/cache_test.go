@@ -104,7 +104,7 @@ func TestCacheCorruptEntriesMiss(t *testing.T) {
 	if err := c.Store(media, 0.2, testHashes(10)); err != nil {
 		t.Fatal(err)
 	}
-	cachePath := c.pathFor(media)
+	cachePath := c.pathFor(media, 0.2)
 	data, err := os.ReadFile(cachePath)
 	if err != nil {
 		t.Fatal(err)
@@ -136,7 +136,7 @@ func TestCacheRemoveAndClear(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := c.Remove(mediaA); err != nil {
+	if err := c.Remove(mediaA, 0.2); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := c.Load(mediaA, 0.2); ok {

@@ -579,9 +579,9 @@ func (t *tool) buildMap(in *inputs) (*timingMap, error) {
 		t.rep.Note(fmt.Sprintf("note: frames are highly self-similar (background median %d of %d bits) - scene matches carry little evidence, verify the timing map carefully", bg, vhash.Side*vhash.Side))
 	}
 
-	// ±10 s local walk: wider than any plausible start offset, narrow
-	// enough that a hash match is unambiguous. Bigger jumps go through resync.
-	window := max(50, int(math.Round(10.0/t.cfg.Interval)))
+	// A narrow local walk follows a constant speed difference; bigger
+	// jumps (a late start, a skipped or an extra scene) go through resync.
+	window := max(4, int(math.Round(0.5/t.cfg.Interval)))
 	matches := findMatches(refHashes, dubHashes, window, t.cfg.MatchDist, t.cfg.Interval)
 	tm, err := buildTimingMap(matches, t.cfg.Interval, in.refDur, in.dubDur, t.cfg.MatchDist)
 	if err != nil {

@@ -58,13 +58,15 @@ func DefaultCacheDir() string {
 // Enabled reports whether the cache has a directory.
 func (c Cache) Enabled() bool { return c.Dir != "" }
 
-// pathFor returns the cache file of a media path.
-func (c Cache) pathFor(path string) string {
+// pathFor returns the cache file of a media path and sampling interval.
+// The interval is part of the key so a dry run at one resolution does not
+// evict the entry used by the other.
+func (c Cache) pathFor(path string, interval float64) string {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		abs = filepath.Clean(path)
 	}
-	sum := sha256.Sum256([]byte(abs))
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s@%g", abs, interval)))
 	return filepath.Join(c.Dir, hex.EncodeToString(sum[:])+".cache")
 }
 
@@ -78,7 +80,7 @@ func (c Cache) Load(path string, interval float64) ([][HashLen]byte, bool) {
 	if err != nil {
 		return nil, false
 	}
-	f, err := os.Open(c.pathFor(path))
+	f, err := os.Open(c.pathFor(path, interval))
 	if err != nil {
 		return nil, false
 	}
@@ -161,7 +163,7 @@ func (c Cache) Store(path string, interval float64, hashes [][HashLen]byte) erro
 	if err := os.MkdirAll(c.Dir, 0o755); err != nil {
 		return err
 	}
-	target := c.pathFor(path)
+	target := c.pathFor(path, interval)
 	tmp, err := os.CreateTemp(c.Dir, filepath.Base(target)+".tmp*")
 	if err != nil {
 		return err
@@ -200,13 +202,13 @@ func (c Cache) Store(path string, interval float64, hashes [][HashLen]byte) erro
 	return os.Rename(tmpName, target)
 }
 
-// Remove deletes the cached entry for path (also after the media file was
-// replaced, when its size/mtime no longer match).
-func (c Cache) Remove(path string) error {
+// Remove deletes the cached entry for path at interval (also after the
+// media file was replaced, when its size/mtime no longer match).
+func (c Cache) Remove(path string, interval float64) error {
 	if !c.Enabled() {
 		return nil
 	}
-	err := os.Remove(c.pathFor(path))
+	err := os.Remove(c.pathFor(path, interval))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}

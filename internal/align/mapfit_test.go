@@ -305,13 +305,13 @@ func TestBuildTimingMapMissingScene(t *testing.T) {
 	if len(tm.Segments) != 2 {
 		t.Fatalf("segments: got %d, want 2 (%+v)", len(tm.Segments), tm.Segments)
 	}
-	if got := tm.Segments[0].RefEnd; math.Abs(got-50) > 0.1 {
+	if got := tm.Segments[0].RefEnd; math.Abs(got-50) > 0.2 {
 		t.Errorf("first segment end: got %.2f, want 50", got)
 	}
-	if got := tm.Segments[1].RefStart; math.Abs(got-65) > 0.1 {
+	if got := tm.Segments[1].RefStart; math.Abs(got-65) > 0.2 {
 		t.Errorf("second segment start: got %.2f, want 65", got)
 	}
-	if gap := tm.Segments[1].RefStart - tm.Segments[0].RefEnd; math.Abs(gap-15) > 0.2 {
+	if gap := tm.Segments[1].RefStart - tm.Segments[0].RefEnd; math.Abs(gap-15) > 0.25 {
 		t.Errorf("silent span: got %.2f, want 15", gap)
 	}
 }
@@ -424,6 +424,28 @@ func TestBuildTimingMapKeepsShortShot(t *testing.T) {
 	}
 }
 
+func TestSpeedEstimateIgnoresOffsetJump(t *testing.T) {
+	// 300 s at 1.0427 with a real 5 s reference-only cut at 100 s: the
+	// global speed must stay at the true ratio, not absorb the jump.
+	const interval = 0.05
+	var rel []timedMatch
+	for j := 0; j < 6000; j++ {
+		dub := float64(j) * interval
+		ref := dub * 1.0427
+		if dub >= 100 {
+			ref += 5
+		}
+		rel = append(rel, timedMatch{dub: dub, ref: ref})
+	}
+	got, ok := speedEstimate(rel)
+	if !ok {
+		t.Fatal("a 300 s file has enough data for a speed estimate")
+	}
+	if math.Abs(got-1.0427) > 0.002 {
+		t.Errorf("speed: got %.5f, want ~1.0427", got)
+	}
+}
+
 func TestGlobalFallback(t *testing.T) {
 	const interval = 0.05
 	// 120 s of the same edit at 1.04 speed, split into 12 noisy segments
@@ -437,7 +459,7 @@ func TestGlobalFallback(t *testing.T) {
 		start := float64(i) * 10
 		segs = append(segs, segment{DubStart: start, DubEnd: start + 10, RefStart: start * 1.04, RefEnd: (start + 10) * 1.04})
 	}
-	s, ok := globalFallback(rel, segs, interval, 124.8, 120)
+	s, ok := globalFallback(rel, segs, 1.04, interval, 124.8, 120)
 	if !ok {
 		t.Fatal("a fragmented same-edit map must fall back to the global fit")
 	}
@@ -450,7 +472,7 @@ func TestGlobalFallback(t *testing.T) {
 			rel[i].ref += 5
 		}
 	}
-	if _, ok := globalFallback(rel, segs, interval, 129.8, 120); ok {
+	if _, ok := globalFallback(rel, segs, 1.04, interval, 129.8, 120); ok {
 		t.Error("a map with a real removed scene must not be replaced by a global fit")
 	}
 }

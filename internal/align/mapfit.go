@@ -19,6 +19,10 @@ const (
 	// minSegmentPoints is the number of reliable matches a continuous run
 	// needs to become a timing segment (shorter runs are match noise).
 	minSegmentPoints = 3
+	// localConfirm is the number of consecutive frames a local match must
+	// agree with. A lone false hit near a cut or a similar shot is rejected
+	// instead of bending the map.
+	localConfirm = 3
 	// breakOffset is the offset jump (seconds) that splits a run. The match
 	// grid resolves about one frame, so a smaller jump is fit noise.
 	breakOffset = 0.5
@@ -39,13 +43,13 @@ const (
 	// bridgeGap is the longest reference gap (seconds) that is bridged
 	// when the fitted offsets on both sides agree: a lost match stretch,
 	// not an edit.
-	bridgeGap = 3.0
+	bridgeGap = 60.0
 	// bridgeOffset is the offset difference (seconds) allowed across a
 	// bridged gap. A real removed scene shifts the offset by its length.
-	bridgeOffset = 0.3
+	bridgeOffset = 0.75
 	// globalResidual is the largest median residual (seconds) a single
 	// global fit may have to replace a fragmented piecewise map.
-	globalResidual = 0.3
+	globalResidual = 0.75
 	// slope bounds for a plausible timing segment. Real edits land at
 	// 1.0 (same speed) and 1.043 (PAL speedup).
 	slopeMin = 0.5
@@ -138,6 +142,72 @@ func fitOffset(points []timedMatch) offsetModel {
 	return a.model()
 }
 
+// fitIntercept fits a line with a fixed slope by the median offset, which
+// is not dragged around by a few bad frame matches.
+func fitIntercept(points []timedMatch, slope float64) (intercept, residual float64) {
+	if len(points) == 0 {
+		return 0, 0
+	}
+	vals := make([]float64, len(points))
+	for i, p := range points {
+		vals[i] = p.ref - slope*p.dub
+	}
+	intercept = medianFloat(vals)
+	for i := range vals {
+		vals[i] = math.Abs(vals[i] - intercept)
+	}
+	return intercept, medianFloat(vals)
+}
+
+// speedEstimate returns a robust global speed ratio (reference seconds per
+// dubbed second) when there is enough data. Frame matches are bucketed into
+// windows, each bucket is reduced to its median offset, and the median of
+// the slopes between consecutive buckets is taken. An isolated offset jump
+// from a scene edit affects one bucket pair, not the median. ok is false
+// for short files, where per-run fitting is more reliable.
+func speedEstimate(rel []timedMatch) (float64, bool) {
+	const window = 20.0
+	type bucket struct {
+		dub, offset float64
+	}
+	var buckets []bucket
+	var cur []float64
+	curID := -1
+	flush := func() {
+		if len(cur) >= 5 {
+			buckets = append(buckets, bucket{dub: (float64(curID) + 0.5) * window, offset: medianFloat(cur)})
+		}
+		cur = cur[:0]
+	}
+	for _, p := range rel {
+		id := int(p.dub / window)
+		if curID >= 0 && id != curID {
+			flush()
+		}
+		curID = id
+		cur = append(cur, p.ref-p.dub)
+	}
+	flush()
+	if len(buckets) < 3 {
+		return 0, false
+	}
+	slopes := make([]float64, 0, len(buckets)-1)
+	for i := 1; i < len(buckets); i++ {
+		dt := buckets[i].dub - buckets[i-1].dub
+		if dt <= 0 {
+			continue
+		}
+		s := 1 + (buckets[i].offset-buckets[i-1].offset)/dt
+		if s >= slopeMin && s <= slopeMax {
+			slopes = append(slopes, s)
+		}
+	}
+	if len(slopes) < 5 {
+		return 0, false
+	}
+	return medianFloat(slopes), true
+}
+
 // centerOffset shifts a fitted line so the median residual is zero. Unlike
 // the least-squares mean it is not dragged around by a few bad matches.
 func centerOffset(points []timedMatch, model offsetModel) offsetModel {
@@ -194,7 +264,7 @@ func findMatches(ref, dub [][vhash.HashLen]byte, window, matchDist int, interval
 		lo := max(0, prev-2)
 		hi := min(len(ref), prev+window+1)
 		best, dist := vhash.WindowBest(dub, ref, j, lo, hi, prev+1)
-		if dist < matchDist {
+		if dist < matchDist && confirmMatch(ref, dub, j, best, matchDist, localConfirm) {
 			matches = append(matches, frameMatch{dub: j, ref: best, dist: dist})
 			prev = best
 			lost = 0
@@ -202,7 +272,11 @@ func findMatches(ref, dub [][vhash.HashLen]byte, window, matchDist int, interval
 		}
 		matches = append(matches, frameMatch{dub: j, ref: -1, dist: dist})
 		lost++
-		if lost == 1 || lost%resyncEvery == 0 {
+		// The first few lost frames retry every time: a real jump usually
+		// becomes matchable a frame or two later, and waiting for the coarse
+		// cadence would leave a second of silence. After that, scan less
+		// often so unrelated stretches stay cheap.
+		if lost <= 3 || lost%resyncEvery == 0 {
 			if r, d, ok := resyncMatch(ref, dub, j, prev, matchDist, interval); ok {
 				matches[len(matches)-1] = frameMatch{dub: j, ref: r, dist: d}
 				prev = r
@@ -281,22 +355,26 @@ func buildTimingMap(matches []frameMatch, interval, refDur, dubDur float64, matc
 	}
 
 	runs := splitRuns(rel)
+	slope, shared := speedEstimate(rel)
+	if !shared {
+		slope = 0 // per-run fit
+	}
 	var pruned [][]timedMatch
 	for _, run := range runs {
-		points, _ := pruneRun(run)
+		points, _ := pruneRun(run, slope)
 		if len(points) >= minSegmentPoints {
 			pruned = append(pruned, points)
 		}
 	}
-	pruned = mergeRuns(pruned)
+	pruned = mergeRuns(pruned, slope)
 
 	var segs []segment
 	for _, run := range pruned {
-		points, _ := pruneRun(run)
+		points, _ := pruneRun(run, slope)
 		if len(points) < minSegmentPoints {
 			continue
 		}
-		s, ok := runSegment(points, interval, refDur, dubDur)
+		s, ok := runSegment(points, slope, interval, refDur, dubDur)
 		if !ok {
 			continue
 		}
@@ -306,7 +384,7 @@ func buildTimingMap(matches []frameMatch, interval, refDur, dubDur float64, matc
 	segs = bridgeGaps(segs, refDur, dubDur)
 	segs = normalizeJoins(segs, dubDur)
 	fallback := false
-	if gs, ok := globalFallback(rel, segs, interval, refDur, dubDur); ok {
+	if gs, ok := globalFallback(rel, segs, slope, interval, refDur, dubDur); ok {
 		segs = []segment{gs}
 		fallback = true
 	}
@@ -372,14 +450,26 @@ func splitRuns(rel []timedMatch) [][]timedMatch {
 	return runs
 }
 
-// pruneRun drops matches far off the run's fitted offset line.
-func pruneRun(points []timedMatch) ([]timedMatch, int) {
+// pruneRun drops matches far off the run's offset line. A positive slope
+// is the shared global speed; zero fits each run's own line.
+func pruneRun(points []timedMatch, slope float64) ([]timedMatch, int) {
 	original := len(points)
 	for iter := 0; iter < 3 && len(points) >= minSegmentPoints; iter++ {
-		model := fitOffset(points)
+		runSlope := slope
+		var intercept float64
+		if runSlope > 0 {
+			intercept, _ = fitIntercept(points, runSlope)
+		} else {
+			model := fitOffset(points)
+			intercept = model.intercept
+			runSlope = 1 + model.slope
+		}
+		if !isFinite(intercept) || !isFinite(runSlope) {
+			break
+		}
 		kept := make([]timedMatch, 0, len(points))
 		for _, p := range points {
-			if math.Abs((p.ref-p.dub)-model.at(p.dub)) <= outlierOffset {
+			if math.Abs(p.ref-(intercept+runSlope*p.dub)) <= outlierOffset {
 				kept = append(kept, p)
 			}
 		}
@@ -393,10 +483,10 @@ func pruneRun(points []timedMatch) ([]timedMatch, int) {
 
 // mergeRuns joins adjacent runs whose observed offset agrees at the
 // boundary; this restores continuity across unreliable stretches and
-// reconnects the runs around a single outlier. The offsets are taken from
-// the matches near each edge, not from extrapolated independent slopes,
-// which are noisy and can drift apart over a gap.
-func mergeRuns(runs [][]timedMatch) [][]timedMatch {
+// reconnects the runs around a single outlier. The offset is ref minus the
+// shared slope times dub, so a global speed difference does not look like
+// a scene jump.
+func mergeRuns(runs [][]timedMatch, slope float64) [][]timedMatch {
 	for changed := true; changed; {
 		changed = false
 		for i := 0; i+1 < len(runs); i++ {
@@ -404,7 +494,7 @@ func mergeRuns(runs [][]timedMatch) [][]timedMatch {
 			if len(a) == 0 || len(b) == 0 {
 				continue
 			}
-			if math.Abs(edgeOffset(a, true)-edgeOffset(b, false)) <= mergeOffset {
+			if math.Abs(edgeOffset(a, slope, true)-edgeOffset(b, slope, false)) <= mergeOffset {
 				runs[i] = append(a, b...)
 				runs = append(runs[:i+1], runs[i+2:]...)
 				changed = true
@@ -415,12 +505,16 @@ func mergeRuns(runs [][]timedMatch) [][]timedMatch {
 	return runs
 }
 
-// edgeOffset is the median ref-dub offset of the first or last few matches
-// of a run - a stable local level even when the fitted slope is noisy.
-func edgeOffset(points []timedMatch, tail bool) float64 {
+// edgeOffset is the median offset of the first or last few matches of a
+// run at the shared slope - a stable local level even when the run is
+// short and its own slope estimate would be noisy.
+func edgeOffset(points []timedMatch, slope float64, tail bool) float64 {
 	n := min(5, len(points))
 	if n == 0 {
 		return 0
+	}
+	if slope <= 0 {
+		slope = 1
 	}
 	vals := make([]float64, n)
 	for i := 0; i < n; i++ {
@@ -428,16 +522,30 @@ func edgeOffset(points []timedMatch, tail bool) float64 {
 		if tail {
 			j = len(points) - n + i
 		}
-		vals[i] = points[j].ref - points[j].dub
+		vals[i] = points[j].ref - slope*points[j].dub
 	}
 	return medianFloat(vals)
 }
 
-// runSegment fits and bounds one continuous run.
-func runSegment(points []timedMatch, interval, refDur, dubDur float64) (segment, bool) {
-	model := centerOffset(points, fitOffset(points))
-	slope := 1 + model.slope
-	if !isFinite(model.intercept) || !isFinite(slope) || slope < slopeMin || slope > slopeMax {
+// runSegment fits the offset of one continuous run at the shared slope
+// (or its own fit when slope is zero) and bounds it to the run's matches.
+func runSegment(points []timedMatch, slope, interval, refDur, dubDur float64) (segment, bool) {
+	var intercept, residual float64
+	if slope > 0 {
+		if !isFinite(slope) || slope < slopeMin || slope > slopeMax {
+			return segment{}, false
+		}
+		intercept, residual = fitIntercept(points, slope)
+	} else {
+		model := centerOffset(points, fitOffset(points))
+		slope = 1 + model.slope
+		intercept = model.intercept
+		residual = medianResidual(points, model)
+		if !isFinite(slope) || slope < slopeMin || slope > slopeMax {
+			return segment{}, false
+		}
+	}
+	if !isFinite(intercept) {
 		return segment{}, false
 	}
 	dubStart := points[0].dub - interval/2
@@ -453,8 +561,8 @@ func runSegment(points []timedMatch, interval, refDur, dubDur float64) (segment,
 	if dubEnd <= dubStart {
 		return segment{}, false
 	}
-	refStart := model.intercept + slope*dubStart
-	refEnd := model.intercept + slope*dubEnd
+	refStart := intercept + slope*dubStart
+	refEnd := intercept + slope*dubEnd
 	refStart = min(max(refStart, 0), refDur)
 	refEnd = min(max(refEnd, 0), refDur)
 	if refEnd-refStart <= 0 {
@@ -466,9 +574,9 @@ func runSegment(points []timedMatch, interval, refDur, dubDur float64) (segment,
 		RefStart:  refStart,
 		RefEnd:    refEnd,
 		Slope:     slope,
-		Intercept: model.intercept,
+		Intercept: intercept,
 		Matches:   len(points),
-		Residual:  medianResidual(points, model),
+		Residual:  residual,
 	}, true
 }
 
@@ -534,7 +642,7 @@ func bridgeGaps(segs []segment, refDur, dubDur float64) []segment {
 		if gap <= 0 || gap > bridgeGap {
 			continue
 		}
-		if math.Abs((b.RefStart-b.DubStart)-(a.RefEnd-a.DubEnd)) > bridgeOffset {
+		if math.Abs((b.RefStart-b.Slope*b.DubStart)-(a.RefEnd-a.Slope*a.DubEnd)) > bridgeOffset {
 			continue
 		}
 		d := a.dubAt(b.RefStart)
@@ -584,11 +692,12 @@ func normalizeJoins(segs []segment, dubDur float64) []segment {
 	return out
 }
 
-// globalFallback fits one line through all reliable matches when the
-// piecewise map is fragmented or incomplete. It only replaces the map when
-// the global line explains the whole reference almost to both ends and is
-// precise: genuine edits shift the offset and fail both tests.
-func globalFallback(rel []timedMatch, segs []segment, interval, refDur, dubDur float64) (segment, bool) {
+// globalFallback fits one line at the shared speed through all reliable
+// matches when the piecewise map is fragmented or incomplete. It only
+// replaces the map when the global line explains the whole reference
+// almost to both ends and is precise: genuine edits shift the offset and
+// fail both tests.
+func globalFallback(rel []timedMatch, segs []segment, slope, interval, refDur, dubDur float64) (segment, bool) {
 	if len(segs) <= 2 || refDur <= 0 {
 		return segment{}, false
 	}
@@ -599,11 +708,11 @@ func globalFallback(rel []timedMatch, segs []segment, interval, refDur, dubDur f
 	if len(segs) <= 8 && covered >= 0.9*refDur {
 		return segment{}, false
 	}
-	points, _ := pruneRun(rel)
+	points, _ := pruneRun(rel, slope)
 	if len(points) < minSegmentPoints {
 		return segment{}, false
 	}
-	s, ok := runSegment(points, interval, refDur, dubDur)
+	s, ok := runSegment(points, slope, interval, refDur, dubDur)
 	if !ok || s.Residual > globalResidual {
 		return segment{}, false
 	}

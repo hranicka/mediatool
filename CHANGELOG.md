@@ -16,6 +16,9 @@
   ffmpeg output instead of buffering every sampled frame, Hamming distance
   uses 64-bit popcounts, and run fitting is incremental, keeping the finer
   sampling cheap in memory and CPU.
+- **`align` frame cache** — the sampling interval is now part of the cache
+  key, so a dry run at one resolution no longer evicts the entry used by
+  another.
 - **`align` path handling** — a leading `~` in a positional path is
   expanded even when the shell did not do it (quoted paths), and a
   reference or dub that cannot be read is reported by name with the OS

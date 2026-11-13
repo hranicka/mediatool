@@ -358,7 +358,7 @@ func (t *tool) processPair(i, n int, p pair) {
 	if t.cfg.NoBackup {
 		// The originals are gone: drop their cached signatures too.
 		for _, path := range []string{p.ref, p.dub} {
-			if err := t.cache.Remove(path); err != nil {
+			if err := t.cache.Remove(path, t.cfg.Interval); err != nil {
 				slog.Warn("cannot remove the frame cache entry", "path", path, "err", err)
 			} else {
 				slog.Debug("frame cache entry removed", "path", path)
