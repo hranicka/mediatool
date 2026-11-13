@@ -161,9 +161,6 @@ func TestProbeToleratesMissingObjects(t *testing.T) {
 	if info.Streams[1].BitRateInt() != 0 {
 		t.Errorf("empty bit_rate must parse to 0, got %d", info.Streams[1].BitRateInt())
 	}
-	if info.Streams[1].SampleRateInt() != 48000 {
-		t.Errorf("sample_rate not parsed: got %d", info.Streams[1].SampleRateInt())
-	}
 	if info.Format.FormatName != "matroska,webm" {
 		t.Errorf("format_name not parsed: %q", info.Format.FormatName)
 	}

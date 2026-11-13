@@ -464,7 +464,7 @@ func (t *tool) processFile(i, n int, path string) {
 		return
 	}
 
-	if !t.gatesPass(path, tmp, info, srcSize, keep) {
+	if !t.gatesPass(path, tmp, info, keep) {
 		return
 	}
 
@@ -487,46 +487,13 @@ func (t *tool) processFile(i, n int, path string) {
 	t.cleaned++
 }
 
-// estimateFrames returns the worst-case container entry count the remux
-// index budget must cover: duration × fps of the first real (non-cover-art)
-// video stream plus duration × sampleRate/1024 audio frames per audio
-// stream (0 when the duration is unknown).
-func estimateFrames(info *probe.Info) int64 {
-	dur := 0.0
-	if d, ok := info.Duration(); ok {
-		dur = d
-	}
-	if dur <= 0 {
-		return 0
-	}
-	for _, tv := range info.ByType()[probe.TypeVideo] {
-		if media.IsCoverArt(tv.Stream) {
-			continue
-		}
-		if fps := tv.Stream.RFrameRateInt(); fps > 0 {
-			return int64(dur*fps) + estimateAudioFrames(info, dur)
-		}
-	}
-	return estimateAudioFrames(info, dur)
-}
-
-// estimateAudioFrames sums duration × sampleRate/1024 over the audio
-// streams (1024 samples per AAC/MP3 frame is the common worst case;
-// ffmpeg writes every audio frame as its own block while mkvmerge laces).
-func estimateAudioFrames(info *probe.Info, dur float64) int64 {
-	frames := int64(0)
-	for _, ta := range info.ByType()[probe.TypeAudio] {
-		if sr := ta.Stream.SampleRateInt(); sr > 0 {
-			frames += int64(dur * float64(sr) / 1024)
-		}
-	}
-	return frames
-}
-
-// gatesPass verifies duration, size (within the remux budget) and the
-// exact planned stream counts of the remuxed output; on failure it
-// reports and leaves the original.
-func (t *tool) gatesPass(path, tmp string, info *probe.Info, srcSize int64, keep counts) bool {
+// gatesPass verifies duration and the exact planned stream counts of the
+// remuxed output; on failure it reports and leaves the original. Size is
+// deliberately not gated: a removal-only -c copy remux copies the payload
+// verbatim, so the size only reflects muxer layout economics (audio
+// lacing, cluster and index granularity) that has nothing to do with
+// correctness - and any growth shows in the Cleaned line.
+func (t *tool) gatesPass(path, tmp string, info *probe.Info, keep counts) bool {
 	newInfo, err := probe.Probe(t.r, t.ffprobeBin, tmp)
 	if err != nil {
 		t.fail(path, fmt.Sprintf("cannot probe the output: %v", err))
@@ -537,21 +504,6 @@ func (t *tool) gatesPass(path, tmp string, info *probe.Info, srcSize int64, keep
 			t.fail(path, fmt.Sprintf("output (%.3fs) is much shorter than source (%.3fs) - keeping original", newDur, srcDur))
 			return false
 		}
-	}
-	st, err := os.Stat(tmp)
-	if err != nil {
-		t.fail(path, fmt.Sprintf("output is missing: %v", err))
-		return false
-	}
-	if !gates.WithinBudget(st.Size(), srcSize, gates.RemuxBudget(srcSize, estimateFrames(info))) {
-		if srcSize > 0 {
-			t.fail(path, fmt.Sprintf("output is %.1f%% larger than source (%s -> %s) - keeping original",
-				100*float64(st.Size()-srcSize)/float64(srcSize), media.HumanBytes(srcSize), media.HumanBytes(st.Size())))
-		} else {
-			t.fail(path, fmt.Sprintf("output is not within the remux allowance (%s -> %s) - keeping original",
-				media.HumanBytes(srcSize), media.HumanBytes(st.Size())))
-		}
-		return false
 	}
 	newCounts := countStreams(newInfo)
 	if newCounts != keep {

@@ -63,13 +63,6 @@ func (s Stream) BitRateInt() int {
 	return n
 }
 
-// SampleRateInt returns the stream sample rate as a number (0 when ffprobe
-// omits it).
-func (s Stream) SampleRateInt() int {
-	n, _ := strconv.Atoi(s.SampleRate)
-	return n
-}
-
 // StartSeconds returns the stream's start timestamp in seconds (false when
 // ffprobe omits it or reports N/A).
 func (s Stream) StartSeconds() (float64, bool) { return parseSeconds(s.StartTime) }

@@ -82,16 +82,14 @@
   entries of the swapped files, and `align -clean-cache [-n]` clears the
   cache (including temp files left by an interrupted write).
 
-- **clean survives muxer layout growth on tiny removals** — a mkvmerge-muxed
-  source remuxed with ffmpeg can still grow beyond the index budget: ffmpeg
-  writes every audio frame as its own block while mkvmerge laces them, and
-  adds CRC-32 per cluster and per-track tags — a few MB on long files the
-  video-frame-only model missed (and the model collapsed to the 64 KB
-  allowance when the video fps was unknown). The remux budget now floors at
-  1% of the source size (real layout overhead stays around 0.05%) and
-  counts audio frames (`sampleRate/1024` per stream) for small files. A
-  failure now reports the actual growth percent instead of the misleading
-  "not smaller".
+- **clean no longer gates on size** — a removal-only `-c copy` remux copies
+  the payload verbatim, so the output size only reflects muxer layout
+  economics (audio lacing, cluster and index granularity): remuxing a
+  mkvmerge-muxed file with ffmpeg can legitimately grow by a few MB and
+  still be a correct clean, yet the size gate rejected it
+  (`output is not smaller (15.9G -> 16G)`). clean's output is now verified
+  by the duration and exact stream-count gates alone; any growth shows in
+  the Cleaned size line. Re-encode outputs (`convert`) still must shrink.
 
 ## 2.1.1
 
