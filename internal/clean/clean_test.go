@@ -474,7 +474,7 @@ func TestCleanSizeGate(t *testing.T) {
 	tl := newTestTool(t, dir, ff, &Config{Target: dir, Langs: "cs,en"}, out)
 	tl.processFile(1, 1, src)
 
-	if tl.failed != 1 || !strings.Contains(out.String(), "not smaller") {
+	if tl.failed != 1 || !strings.Contains(out.String(), "larger than source") {
 		t.Errorf("growing output must fail: %+v out=%s", tl, out.String())
 	}
 }
@@ -525,8 +525,62 @@ func TestCleanSizeGateBeyondFrameBudget(t *testing.T) {
 	tl := newTestTool(t, dir, ff, &Config{Target: dir, Langs: "cs,en"}, out)
 	tl.processFile(1, 1, src)
 
-	if tl.failed != 1 || !strings.Contains(out.String(), "not smaller") {
+	if tl.failed != 1 || !strings.Contains(out.String(), "larger than source") {
 		t.Errorf("growth beyond the frame budget must fail: %+v out=%s", tl, out.String())
+	}
+}
+
+// Regression: a mkvmerge-muxed source remuxed with ffmpeg grows by
+// muxer-layout overhead the frame model misses (audio lacing, cluster
+// and cue granularity, CRC tags) - a few MB on long files, invisible to
+// the per-frame model. Within the 1% remux floor the clean must still
+// succeed instead of keeping every file uncleaned.
+func TestCleanMuxerLayoutOverheadPasses(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "movie.mkv")
+	writeFile(t, src, 100_000_000)
+
+	ff := &fakeFF{probeFor: func(src string) (string, bool) {
+		if strings.HasSuffix(filepath.Base(src), ".tmp") {
+			return remuxJSON(1, 2), true
+		}
+		return libraryJSON(), true
+	}, remuxSize: 100_600_000} // 0.6% layout growth: within the 1% floor
+	out := &bytes.Buffer{}
+	tl := newTestTool(t, dir, ff, &Config{Target: dir, Langs: "cs,en"}, out)
+	tl.processFile(1, 1, src)
+
+	if tl.cleaned != 1 || tl.failed != 0 {
+		t.Errorf("muxer layout growth must not block the clean: %+v out=%s", tl, out.String())
+	}
+}
+
+// Regression: ffmpeg writes every audio frame as its own SimpleBlock
+// while mkvmerge laces them, and on sources whose video fps is unknown
+// the old frame-model budget collapsed to the 64KB allowance and
+// rejected legit removals. Audio frames now count toward the budget.
+func TestCleanAudioBlockOverheadPasses(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "movie.mkv")
+	writeFile(t, src, 1_000_000)
+
+	audioJSON := fmt.Sprintf(`{"streams":[%s,%s,%s,%s],"format":{"duration":"600.0","size":"1000000","bit_rate":"8000000"}}`,
+		streamJSON("h264", "video", "", ""), // no r_frame_rate: allowance-only video model
+		coverJSON(),
+		streamJSON("aac", "audio", "ces", `"sample_rate":"48000"`),
+		streamJSON("aac", "audio", "ger", `"sample_rate":"48000"`))
+	ff := &fakeFF{probeFor: func(src string) (string, bool) {
+		if strings.HasSuffix(filepath.Base(src), ".tmp") {
+			return remuxJSON(1, 0), true
+		}
+		return audioJSON, true
+	}, remuxSize: 1_900_000} // audio lacing growth: 2×600s×48000/1024 frames × 32B
+	out := &bytes.Buffer{}
+	tl := newTestTool(t, dir, ff, &Config{Target: dir, Langs: "cs,en"}, out)
+	tl.processFile(1, 1, src)
+
+	if tl.cleaned != 1 || tl.failed != 0 {
+		t.Errorf("audio block growth must not block the clean: %+v out=%s", tl, out.String())
 	}
 }
 
@@ -538,14 +592,15 @@ func TestEstimateFrames(t *testing.T) {
 		}
 		return info
 	}
-	// duration × fps of the first real video; the cover art fps is skipped
+	// duration × fps of the first real video plus duration ×
+	// sampleRate/1024 per audio stream; the cover art fps is skipped
 	info := parse(`{"streams":[
 		{"codec_name":"mjpeg","codec_type":"video","r_frame_rate":"25/1","disposition":{"attached_pic":1}},
 		{"codec_name":"h264","codec_type":"video","r_frame_rate":"30000/1001"},
-		{"codec_name":"ac3","codec_type":"audio"}],
+		{"codec_name":"ac3","codec_type":"audio","sample_rate":"48000"}],
 		"format":{"duration":"600.0"}}`)
-	if got := estimateFrames(info); got != 17982 {
-		t.Errorf("estimateFrames = %d, want 17982", got)
+	if got := estimateFrames(info); got != 17982+28125 {
+		t.Errorf("estimateFrames = %d, want %d", got, 17982+28125)
 	}
 	// unknown fps or missing duration -> 0 (allowance-only budget)
 	if got := estimateFrames(parse(`{"streams":[{"codec_name":"h264","codec_type":"video"}],"format":{"duration":"600.0"}}`)); got != 0 {

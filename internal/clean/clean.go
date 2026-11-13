@@ -487,9 +487,10 @@ func (t *tool) processFile(i, n int, path string) {
 	t.cleaned++
 }
 
-// estimateFrames returns duration × fps of the first real (non-cover-art)
-// video stream — the worst-case frame count the remux index budget must
-// cover (0 when either is unknown).
+// estimateFrames returns the worst-case container entry count the remux
+// index budget must cover: duration × fps of the first real (non-cover-art)
+// video stream plus duration × sampleRate/1024 audio frames per audio
+// stream (0 when the duration is unknown).
 func estimateFrames(info *probe.Info) int64 {
 	dur := 0.0
 	if d, ok := info.Duration(); ok {
@@ -503,14 +504,27 @@ func estimateFrames(info *probe.Info) int64 {
 			continue
 		}
 		if fps := tv.Stream.RFrameRateInt(); fps > 0 {
-			return int64(dur * fps)
+			return int64(dur*fps) + estimateAudioFrames(info, dur)
 		}
 	}
-	return 0
+	return estimateAudioFrames(info, dur)
 }
 
-// gatesPass verifies duration, size (within the remux index budget) and
-// the exact planned stream counts of the remuxed output; on failure it
+// estimateAudioFrames sums duration × sampleRate/1024 over the audio
+// streams (1024 samples per AAC/MP3 frame is the common worst case;
+// ffmpeg writes every audio frame as its own block while mkvmerge laces).
+func estimateAudioFrames(info *probe.Info, dur float64) int64 {
+	frames := int64(0)
+	for _, ta := range info.ByType()[probe.TypeAudio] {
+		if sr := ta.Stream.SampleRateInt(); sr > 0 {
+			frames += int64(dur * float64(sr) / 1024)
+		}
+	}
+	return frames
+}
+
+// gatesPass verifies duration, size (within the remux budget) and the
+// exact planned stream counts of the remuxed output; on failure it
 // reports and leaves the original.
 func (t *tool) gatesPass(path, tmp string, info *probe.Info, srcSize int64, keep counts) bool {
 	newInfo, err := probe.Probe(t.r, t.ffprobeBin, tmp)
@@ -529,8 +543,14 @@ func (t *tool) gatesPass(path, tmp string, info *probe.Info, srcSize int64, keep
 		t.fail(path, fmt.Sprintf("output is missing: %v", err))
 		return false
 	}
-	if !gates.WithinBudget(st.Size(), srcSize, gates.IndexBudget(estimateFrames(info))) {
-		t.fail(path, fmt.Sprintf("output is not smaller (%s -> %s) - keeping original", media.HumanBytes(srcSize), media.HumanBytes(st.Size())))
+	if !gates.WithinBudget(st.Size(), srcSize, gates.RemuxBudget(srcSize, estimateFrames(info))) {
+		if srcSize > 0 {
+			t.fail(path, fmt.Sprintf("output is %.1f%% larger than source (%s -> %s) - keeping original",
+				100*float64(st.Size()-srcSize)/float64(srcSize), media.HumanBytes(srcSize), media.HumanBytes(st.Size())))
+		} else {
+			t.fail(path, fmt.Sprintf("output is not within the remux allowance (%s -> %s) - keeping original",
+				media.HumanBytes(srcSize), media.HumanBytes(st.Size())))
+		}
 		return false
 	}
 	newCounts := countStreams(newInfo)

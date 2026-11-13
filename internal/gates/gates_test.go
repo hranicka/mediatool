@@ -46,6 +46,21 @@ func TestIndexBudget(t *testing.T) {
 	}
 }
 
+func TestRemuxBudget(t *testing.T) {
+	// small source: the frame model applies
+	if got := RemuxBudget(100_000, 750); got != IndexBudget(750) {
+		t.Errorf("RemuxBudget(100000, 750) = %d, want the frame model %d", got, IndexBudget(750))
+	}
+	// huge source: the 1% floor dominates any frame model
+	if got := RemuxBudget(15<<30, 0); got != 15<<30/100 {
+		t.Errorf("RemuxBudget(15GiB, 0) = %d, want the 1%% floor %d", got, 15<<30/100)
+	}
+	// the floor never lowers the frame model
+	if got := RemuxBudget(1_000, 1_000_000); got != IndexBudget(1_000_000) {
+		t.Errorf("RemuxBudget(1000, 1000000) = %d, want the frame model %d", got, IndexBudget(1_000_000))
+	}
+}
+
 func TestWithinBudget(t *testing.T) {
 	if !WithinBudget(100, 100, 50) {
 		t.Error("same size must stay within budget")
