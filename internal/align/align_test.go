@@ -19,6 +19,7 @@ type fakeFF struct {
 	probeFor   func(src string) (string, bool)
 	framesFor  func(src string) []byte
 	rawFor     func(src string) []byte
+	pcmFor     func(src string) []byte
 	streamLog  [][]string
 	frameCalls int
 }
@@ -34,6 +35,15 @@ func (f *fakeFF) Output(name string, args ...string) ([]byte, error) {
 		return []byte(`{"streams":[],"format":{}}`), nil
 	}
 	if name == "ffmpeg" {
+		for i := 0; i+1 < len(args); i++ {
+			if args[i] == "-f" && args[i+1] == "f32le" {
+				// the calibration's audio decode is not a frame extraction
+				if f.pcmFor != nil {
+					return f.pcmFor(args[len(args)-1]), nil
+				}
+				return []byte{}, nil
+			}
+		}
 		for i := 0; i+1 < len(args); i++ {
 			if args[i] == "-i" && f.framesFor != nil {
 				f.frameCalls++

@@ -21,7 +21,19 @@
   residual, per-segment residuals and tilt, plausible speed,
   fragmentation) and refuses loudly instead of producing wrong lipsync;
   the duration ratio is cross-checked against the detected cuts but
-  never refuses. Verified on a real EN WEB-DL vs Czech TV capture
+  never refuses.
+- **`align` audio calibration** — frame matching aligns the dub's video,
+  but a capture's audio stream can sit at its own offset against its own
+  video (measured 0.1–0.4 s across a real Czech TV capture library),
+  leaving the whole dub track out of lipsync no matter how good the
+  frame fit is. After the first resample, the shared music/effects bed
+  between the language versions is cross-correlated against the
+  reference audio in 30 s windows (raw waveform FFT, parabolic peak
+  refinement), each segment's median lag shifts its intercept, and the
+  resample repeats until the measured lag vanishes. Segments without
+  stable audio evidence inherit their neighbour's correction; the report
+  prints the measured per-segment calibration. Post-calibration sync on
+  the real library: every strong-correlation window within ±0.12 s. Verified on a real EN WEB-DL vs Czech TV capture
   library: every episode fits at PAL speedup 23.976→25 with 20 ms
   residual, and each broadcast's 2–3 scene trims land as digital silence
   at the exact mapped positions.

@@ -706,6 +706,9 @@ func (t *tool) printFit(m *timingMap, in *inputs) {
 	if shortest := math.Min(in.refDur, in.dubDur); shortest > 0 && m.Overlap < warnOverlap*shortest {
 		t.rep.Note(fmt.Sprintf("note: the files share only %.0f%% of their content (modified intro/credits or a different cut)", m.Overlap/shortest*100))
 	}
+	if t.cfg.DryRun {
+		t.rep.Note("note: the dub audio's offset against the reference audio is measured and corrected when muxing")
+	}
 	// consistency: the duration difference must be explained by the
 	// silent ends and the detected cuts - a mismatch is the fingerprint
 	// of smaller cuts the detection missed, which would leave drift
@@ -730,6 +733,25 @@ func (t *tool) printFit(m *timingMap, in *inputs) {
 			t.rep.Raw(ui.Neutral, "  dub %5ds -> (outside the reference)\n", s)
 		}
 	}
+}
+
+// resampleAgain rewrites the resampled dub after the audio calibration
+// shifted the map's intercepts.
+func (t *tool) resampleAgain(dubRaw, resRaw string, m *timingMap, in *inputs) error {
+	src, err := os.Open(dubRaw)
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+	dst, err := os.Create(resRaw)
+	if err != nil {
+		return err
+	}
+	defer dst.Close()
+	if err := resampleDub(src, dst, m, in.refDur, in.dubAudioLead); err != nil {
+		return err
+	}
+	return dst.Close()
 }
 
 // muxAligned extracts the dubbed audio, resamples it onto the reference
@@ -770,6 +792,18 @@ func (t *tool) muxAligned(in *inputs, m *timingMap, outPath, outFmt string) erro
 	}
 	if err := dst.Close(); err != nil {
 		return err
+	}
+
+	// the frame map cannot see the dub file's own audio/video offset, so
+	// it is measured against the reference audio (shared music/effects
+	// bed) and the map's intercepts shift by it before the final resample
+	t.rep.Phase("calibrating the audio offset...")
+	if err := t.calibrateAudio(in, m, dubRaw, resRaw); err != nil {
+		t.rep.Note(fmt.Sprintf("note: audio calibration skipped: %v", err))
+	} else {
+		if err := t.resampleAgain(dubRaw, resRaw, m, in); err != nil {
+			return err
+		}
 	}
 
 	args := []string{"-hide_banner", "-loglevel", "error", "-stats", "-nostdin", "-y",
