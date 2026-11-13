@@ -10,20 +10,19 @@ import (
 
 const sampleRate = 48000
 
-// fadeSeconds smooths the edges of a timing segment so a cut between a
-// dubbed scene and a reference-only gap does not click.
+// fadeSeconds smooths the edges of the dub body so the transitions to and
+// from silence do not click.
 const fadeSeconds = 0.02
 
-// rewindFrames is how far the frame reader can step back (a power of two,
-// about 1.4 s at 48 kHz). The map is normalized to be monotonic, but a
-// tiny fit artifact at a segment join must not turn into silence.
-const rewindFrames = 1 << 16
+// rewindFrames is how many recent frames the reader keeps (a power of
+// two). The timing line is strictly monotonic, so the mapped dub position
+// never rewinds; the small ring only serves the interpolation overlap - a
+// stretched map (speed < 1) interpolates around the same dub index for
+// many consecutive output samples.
+const rewindFrames = 16
 
-// dubFrames streams raw s16le stereo frames with a short rewind buffer.
-// The map advances monotonically, so a window of recent frames is enough
-// to serve stretches where consecutive output samples interpolate around
-// the same dub index (local slope < 1, e.g. a PAL-speedup dub aligned onto
-// a slower reference) and to absorb small fit artifacts at joins.
+// dubFrames streams raw s16le stereo frames with a small ring of recent
+// frames.
 type dubFrames struct {
 	br  *bufio.Reader
 	pos int64      // index of the next frame to read
@@ -68,40 +67,41 @@ func (d *dubFrames) read() ([2]int16, bool) {
 	return f, true
 }
 
-// resampleDub streams the dubbed raw audio onto the reference timeline:
-// each segment maps its reference span back to dubbed time; reference
-// regions not covered by any segment stay silent. Linear interpolation
-// between neighboring dub samples keeps framerate variants seamless.
+// resampleDub streams the dubbed raw audio onto the reference timeline
+// through the timing line: reference sample t reads dub time
+// (t - intercept)/speed. Regions with no dub counterpart (an extra
+// reference intro or credits tail) stay silent, dub regions before the
+// reference start or past its end are dropped, and linear interpolation
+// between neighboring dub samples keeps speed conversions seamless.
 // audioLead is the leading gap dropped by the raw extraction: dubbed time
 // minus the lead addresses the first extracted sample.
-func resampleDub(src io.Reader, dst io.Writer, tm *timingMap, refDur, audioLead float64) error {
+func resampleDub(src io.Reader, dst io.Writer, l line, refDur, dubDur, audioLead float64) error {
 	d := &dubFrames{br: bufio.NewReaderSize(src, 1<<20)}
 	bw := bufio.NewWriterSize(dst, 1<<20)
 	nOut := int(refDur * float64(sampleRate))
+	bodyStart := max(0.0, l.refAt(0))
+	bodyEnd := refDur
+	if e := l.refAt(dubDur); e < bodyEnd {
+		bodyEnd = e
+	}
 	const chunk = 1_000_000
-	segIdx := 0
-	segs := tm.Segments
+	var silence [4]byte
 	for start := 0; start < nOut; start += chunk {
 		end := min(start+chunk, nOut)
 		for t := start; t < end; t++ {
 			sec := float64(t) / float64(sampleRate)
-			for segIdx < len(segs) && sec >= segs[segIdx].RefEnd {
-				segIdx++
-			}
-			if segIdx >= len(segs) || sec < segs[segIdx].RefStart {
-				var silence [4]byte
+			gain := bodyGain(sec, bodyStart, bodyEnd, refDur)
+			if gain <= 0 {
 				if _, err := bw.Write(silence[:]); err != nil {
 					return fmt.Errorf("cannot write resampled audio: %w", err)
 				}
 				continue
 			}
-			seg := segs[segIdx]
-			idx := (seg.dubAt(sec) - audioLead) * float64(sampleRate)
+			idx := (l.dubAt(sec) - audioLead) * float64(sampleRate)
 			i0 := int64(math.Floor(idx))
 			frac := float32(idx - float64(i0))
 			s0, _ := d.frame(i0)
 			s1, _ := d.frame(i0 + 1)
-			gain := segmentGain(segs, segIdx, sec, refDur)
 			var out [4]byte
 			for ch := 0; ch < 2; ch++ {
 				v := (float32(s0[ch])*(1-frac) + float32(s1[ch])*frac) * gain
@@ -115,26 +115,19 @@ func resampleDub(src io.Reader, dst io.Writer, tm *timingMap, refDur, audioLead 
 	return bw.Flush()
 }
 
-// segmentGain fades a segment in and out over fadeSeconds where it borders
-// real silence: the head/tail of the file or a reference-only gap. Edges
-// butted against another segment stay at full gain, so continuous music
-// does not dip at a map join.
-func segmentGain(segs []segment, idx int, sec, refDur float64) float32 {
-	s := segs[idx]
-	gapBefore := s.RefStart > 0 && (idx == 0 || s.RefStart-segs[idx-1].RefEnd > 1e-3)
-	gapAfter := s.RefEnd < refDur
-	if idx+1 < len(segs) && segs[idx+1].RefStart-s.RefEnd <= 1e-3 {
-		gapAfter = false
-	}
+// bodyGain fades the dub body in and out over fadeSeconds where it
+// borders real silence: the head or tail of the reference. Outside the
+// body the gain is zero.
+func bodyGain(sec, bodyStart, bodyEnd, refDur float64) float32 {
 	gain := float32(1)
-	if gapBefore {
-		if in := sec - s.RefStart; in < fadeSeconds {
-			gain = min(gain, float32(in/fadeSeconds))
+	if bodyStart > 0 {
+		if in := sec - bodyStart; in < fadeSeconds {
+			gain = min(gain, float32(max(in, 0)/fadeSeconds))
 		}
 	}
-	if gapAfter {
-		if out := s.RefEnd - sec; out < fadeSeconds {
-			gain = min(gain, float32(out/fadeSeconds))
+	if bodyEnd < refDur {
+		if out := bodyEnd - sec; out < fadeSeconds {
+			gain = min(gain, float32(max(out, 0)/fadeSeconds))
 		}
 	}
 	return max(gain, 0)

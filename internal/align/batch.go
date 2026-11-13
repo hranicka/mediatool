@@ -299,12 +299,12 @@ func (t *tool) processPair(i, n int, p pair) {
 		fmt.Sprintf("dub audio: %s", t.dubAudioLabel(in)))
 	t.rep.Detail("output: %s", dest)
 
-	tm, err := t.buildMap(in)
+	fit, err := t.buildFit(in)
 	if err != nil {
 		t.fail(p.ref, err.Error())
 		return
 	}
-	t.printMap(tm, in)
+	t.printFit(fit, in)
 
 	if t.cfg.DryRun {
 		action := fmt.Sprintf("replace %s with the aligned file", p.ref)
@@ -315,7 +315,8 @@ func (t *tool) processPair(i, n int, p pair) {
 			details = append(details, fmt.Sprintf("backups: %s, %s", p.ref+".old", p.dub+".old"))
 		}
 		t.rep.Would("Would align", i, n, p.ref,
-			fmt.Sprintf("%d segment(s), %.0f%% reference covered", len(tm.Segments), tm.RefCoverage*100),
+			fmt.Sprintf("speed %.4f, dub 0 lands at ref %+.2fs, %.0f%% of the shared span matched",
+				fit.Line.speed, fit.Line.intercept, fit.InlierFrac*100),
 			append([]string{action}, details...)...)
 		t.aligned++
 		return
@@ -329,7 +330,7 @@ func (t *tool) processPair(i, n int, p pair) {
 			os.Remove(tmp)
 		}
 	}()
-	if err := t.muxAligned(in, tm, tmp, outFmt); err != nil {
+	if err := t.muxAligned(in, fit, tmp, outFmt); err != nil {
 		t.fail(p.ref, err.Error())
 		return
 	}

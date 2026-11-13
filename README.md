@@ -25,7 +25,7 @@ make build      # dist/mediatool
 | `ac3` | append AC3 640k compatibility tracks for DTS/TrueHD/FLAC audio |
 | `dup` | report duplicate audio tracks (read-only) |
 | `dedup` | report content duplicates across files (read-only) |
-| `align` | append a dubbed audio track by scene matching (single pair or directory batch) |
+| `align` | append a dubbed audio track timed by frame matching (single pair or directory batch) |
 | `enhance` | AI-upscale with Real-ESRGAN and re-encode to HEVC 1080p |
 | `version` | print the version |
 
@@ -191,7 +191,7 @@ mediatool align [same flags] -dub-suffix .cz <dir>
 mediatool align -clean-cache [-cache-dir dir] [-n]
 ```
 
-Appends a **dubbed audio track to a reference video** by scene matching.
+Appends a **dubbed audio track to a reference video** by frame matching.
 The aligned file carries **every reference stream** — video, all audio
 tracks, subtitles, attachments/fonts, chapters and metadata — plus the
 selected dub track as an AAC track tagged with `-lang-dub` and titled
@@ -260,26 +260,33 @@ like the timing hashes, so a repeated run is instant. Use
 `-no-content-pair` to keep the pure name pairing.
 
 **Timing.** Frames sampled from both files every `-interval` seconds
-(default 0.05, i.e. 20 fps) are perceptually hashed; each dubbed frame
-matches the reference, and a **piecewise timing map** of affine segments
-with outlier rejection handles different framerates (PAL speedup), shifted
-starts/ends and skipped or extra scenes. The 50 ms sampling grid limits
-the map to about ±25 ms — roughly one video frame — and the run prints
-each segment's fit residual so a suspicious map is visible before
-muxing. A jump reattaches at the first matching frame, segment joins are
-forced monotonic, and a small unmatched stretch is bridged when the
-timing offset is continuous on both sides — only a real missing scene
-stays silent. A jump that would leave too little reference for the dub
-still to play is rejected, so a repeated shot near the end (credits, a
-reused scene) cannot hijack the walk and silence the remaining minutes. Reference regions with no dub counterpart stay silent on
-the Czech track (the English track is still there); dub-only regions are
-dropped. The run reports match coverage, the segments and every gap above
-20 ms with the total and longest silent span, and refuses maps covering
-less than 80% of either file. Highly self-similar content (synthetic
-patterns, long static scenes) gets a caution note. If the dubbed audio
-stream starts after the first video frame (common in broadcast TS), that
-lead is kept as silence so the authored A/V relationship survives. The
-dub is resampled as AAC 192k stereo (`-bitrate` overrides).
+(default 0.05, i.e. 20 fps) are perceptually hashed, and one **timing
+line** `ref = offset + speed × dub` is fitted through the matches. The
+model is that both files are the same edit up to one global speed
+difference (dub masters often run at PAL speedup, an NTSC transfer, or
+the reverse) and one time shift (a shorter or longer intro or credits).
+A coarse global pass locates the line, a constrained walk refines it at
+the full sampling grid, and the final fit keeps only the matches that
+agree with it — false hits from similar shots cannot bend the timing.
+The 50 ms grid puts the residual around 20–30 ms, well under one video
+frame. The run validates the fit and refuses loudly — instead of
+producing wrong lipsync — when the matches do not follow one line (low
+inlier share, weak span support, large median or p95 residual), or when
+the fitted speed is outside the plausible conversions. The duration ratio
+is reported next to the fitted speed for context and flagged when it
+points the other way, but it never refuses: a modified intro or credits
+can flip it against the true speed. Reference regions with no dub counterpart (an extra
+intro or credits tail) stay silent on the Czech track (the English track
+is still there); dub regions past the reference are dropped; both
+transitions are faded. The report prints the fitted speed with its
+known-conversion label (PAL speedup etc.), the duration agreement, the
+match evidence, the silent and dropped spans, and an offset table.
+Highly self-similar content (synthetic patterns, long static scenes)
+gets a caution note. Mid-video scene cuts between the two files are not
+supported — the validation refuses them. If the dubbed audio stream
+starts after the first video frame (common in broadcast TS), that lead
+is kept as silence so the authored A/V relationship survives. The dub is
+resampled as AAC 192k stereo (`-bitrate` overrides).
 
 **Frame cache.** The hashing phase decodes each file fully, so the
 perceptual hashes are cached under `$XDG_CACHE_HOME/mediatool/align`

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/binary"
+	"math"
 	"testing"
 )
 
@@ -19,16 +20,20 @@ func dubRaw(nDub int) []byte {
 	return raw
 }
 
-func sampleL(res []byte, frame int) int16 {
-	return int16(binary.LittleEndian.Uint16(res[frame*4:]))
+// rampRaw builds nDub frames whose channels are i%mod: positions stay
+// distinguishable across the whole track.
+func rampRaw(nDub, mod int) []byte {
+	raw := make([]byte, nDub*4)
+	for i := 0; i < nDub; i++ {
+		v := int16(i % mod)
+		binary.LittleEndian.PutUint16(raw[i*4:], uint16(v))
+		binary.LittleEndian.PutUint16(raw[i*4+2:], uint16(v))
+	}
+	return raw
 }
 
-func oneSegment(dubEnd, refStart, refEnd, slope, intercept float64) *timingMap {
-	return &timingMap{Segments: []segment{{
-		DubStart: 0, DubEnd: dubEnd,
-		RefStart: refStart, RefEnd: refEnd,
-		Slope: slope, Intercept: intercept,
-	}}}
+func sampleL(res []byte, frame int) int16 {
+	return int16(binary.LittleEndian.Uint16(res[frame*4:]))
 }
 
 func TestResampleDubConstantOffset(t *testing.T) {
@@ -37,9 +42,8 @@ func TestResampleDubConstantOffset(t *testing.T) {
 
 	// +2 s offset: output sample t reads dub frame t-2 s; the reference is
 	// 6 s long (2 s dub-free head + 4 s dub)
-	tm := oneSegment(4, 2, 6, 1, 2)
 	var out bytes.Buffer
-	if err := resampleDub(bytes.NewReader(raw), &out, tm, 6.0, 0); err != nil {
+	if err := resampleDub(bytes.NewReader(raw), &out, line{speed: 1, intercept: 2}, 6.0, 4.0, 0); err != nil {
 		t.Fatalf("resampleDub: %v", err)
 	}
 	res := out.Bytes()
@@ -52,10 +56,10 @@ func TestResampleDubConstantOffset(t *testing.T) {
 			t.Errorf("frame %d: got %d, want %d", frame, got, want)
 		}
 	}
-	// before the dub covered region starts the track is silent
+	// before the dub body starts the track is silent
 	for _, frame := range []int{0, sr, 2*sr - 1} {
 		if got := sampleL(res, frame); got != 0 {
-			t.Errorf("frame %d: got %d, want silence before the segment", frame, got)
+			t.Errorf("frame %d: got %d, want silence before the dub body", frame, got)
 		}
 	}
 }
@@ -64,9 +68,8 @@ func TestResampleDubSilentPastDubEnd(t *testing.T) {
 	const sr = sampleRate
 	raw := dubRaw(2 * sr) // 2 s dub
 
-	tm := oneSegment(2, 0, 2, 1, 0)
 	var out bytes.Buffer
-	if err := resampleDub(bytes.NewReader(raw), &out, tm, 8.0, 0); err != nil {
+	if err := resampleDub(bytes.NewReader(raw), &out, line{speed: 1}, 8.0, 2.0, 0); err != nil {
 		t.Fatalf("resampleDub: %v", err)
 	}
 	res := out.Bytes()
@@ -78,33 +81,49 @@ func TestResampleDubSilentPastDubEnd(t *testing.T) {
 	}
 	for _, frame := range []int{2*sr + 5, 7 * sr} {
 		if got := sampleL(res, frame); got != 0 {
-			t.Errorf("frame %d must be silent past the covered span, got %d", frame, got)
+			t.Errorf("frame %d must be silent past the dub end, got %d", frame, got)
 		}
 	}
 }
 
-func TestResampleDubGapsStaySilent(t *testing.T) {
+func TestResampleDubDropsDubHead(t *testing.T) {
 	const sr = sampleRate
-	raw := dubRaw(3 * sr)
-	tm := &timingMap{Segments: []segment{
-		{DubStart: 0, DubEnd: 1, RefStart: 0, RefEnd: 1, Slope: 1},
-		{DubStart: 2, DubEnd: 3, RefStart: 2, RefEnd: 3, Slope: 1},
-	}}
+	raw := rampRaw(6*sr, 30000) // 6 s dub
+
+	// the dub runs 2 s ahead of the reference (a longer intro): the dub's
+	// first 2 s have no reference counterpart and must be dropped
 	var out bytes.Buffer
-	if err := resampleDub(bytes.NewReader(raw), &out, tm, 3.0, 0); err != nil {
+	if err := resampleDub(bytes.NewReader(raw), &out, line{speed: 1, intercept: -2}, 4.0, 6.0, 0); err != nil {
 		t.Fatalf("resampleDub: %v", err)
 	}
 	res := out.Bytes()
-	if got := sampleL(res, sr/2); got == 0 {
-		t.Error("first segment must carry audio")
+	if len(res) != 4*sr*4 {
+		t.Fatalf("output size: got %d, want %d", len(res), 4*sr*4)
 	}
-	for frame := sr + 1; frame < 2*sr; frame += sr / 4 {
-		if got := sampleL(res, frame); got != 0 {
-			t.Fatalf("frame %d in the reference-only gap must be silent, got %d", frame, got)
+	for _, frame := range []int{0, 1, 12345, 4*sr - 1} {
+		dubIdx := frame + 2*sr
+		if got, want := sampleL(res, frame), int16(dubIdx%30000); got != want {
+			t.Errorf("frame %d: got %d, want %d (dub frame %d)", frame, got, want, dubIdx)
 		}
 	}
-	if got := sampleL(res, 2*sr+sr/2); got == 0 {
-		t.Error("second segment must carry audio")
+}
+
+func TestResampleDubAllSilentWhenNoOverlap(t *testing.T) {
+	const sr = sampleRate
+	// the line lands the whole dub outside the reference: degenerate, but
+	// it must produce silence, not read frames or panic
+	var out bytes.Buffer
+	if err := resampleDub(bytes.NewReader(dubRaw(4*sr)), &out, line{speed: 1, intercept: 100}, 2.0, 4.0, 0); err != nil {
+		t.Fatalf("resampleDub: %v", err)
+	}
+	res := out.Bytes()
+	if len(res) != 2*sr*4 {
+		t.Fatalf("output size: got %d, want %d", len(res), 2*sr*4)
+	}
+	for _, frame := range []int{0, sr, 2*sr - 1} {
+		if got := sampleL(res, frame); got != 0 {
+			t.Errorf("frame %d: got %d, want silence", frame, got)
+		}
 	}
 }
 
@@ -115,15 +134,15 @@ func TestResampleDubFadesAtReferenceHead(t *testing.T) {
 		binary.LittleEndian.PutUint16(raw[i*4:], 10000)
 		binary.LittleEndian.PutUint16(raw[i*4+2:], 10000)
 	}
-	tm := oneSegment(0.5, 0.5, 1, 1, 0.5)
+	// the dub body starts 0.5 s into the reference
 	var out bytes.Buffer
-	if err := resampleDub(bytes.NewReader(raw), &out, tm, 1.0, 0); err != nil {
+	if err := resampleDub(bytes.NewReader(raw), &out, line{speed: 1, intercept: 0.5}, 1.0, 0.5, 0); err != nil {
 		t.Fatalf("resampleDub: %v", err)
 	}
 	res := out.Bytes()
 	fadeFrames := int(fadeSeconds * sr)
 	if got := sampleL(res, sr/2); got != 0 {
-		t.Errorf("segment head must start at silence, got %d", got)
+		t.Errorf("body head must start at silence, got %d", got)
 	}
 	if got := sampleL(res, sr/2+fadeFrames/2); got <= 0 || got >= 10000 {
 		t.Errorf("mid-fade must be attenuated, got %d", got)
@@ -133,64 +152,16 @@ func TestResampleDubFadesAtReferenceHead(t *testing.T) {
 	}
 }
 
-func TestResampleDubNoDipAtSegmentJoin(t *testing.T) {
-	const sr = sampleRate
-	raw := make([]byte, sr*4)
-	for i := 0; i < sr; i++ {
-		binary.LittleEndian.PutUint16(raw[i*4:], 10000)
-		binary.LittleEndian.PutUint16(raw[i*4+2:], 10000)
-	}
-	// two segments butted at 0.5 s: continuous content, no gap in between
-	tm := &timingMap{Segments: []segment{
-		{DubStart: 0, DubEnd: 0.5, RefStart: 0, RefEnd: 0.5, Slope: 1},
-		{DubStart: 0.5, DubEnd: 1, RefStart: 0.5, RefEnd: 1, Slope: 1},
-	}}
-	var out bytes.Buffer
-	if err := resampleDub(bytes.NewReader(raw), &out, tm, 1.0, 0); err != nil {
-		t.Fatalf("resampleDub: %v", err)
-	}
-	res := out.Bytes()
-	for _, frame := range []int{sr/2 - 1, sr / 2, sr/2 + 1, sr - 2000} {
-		if got := sampleL(res, frame); got != 10000 {
-			t.Errorf("frame %d at the butted join: got %d, want 10000 (no fade)", frame, got)
-		}
-	}
-}
-
-func TestResampleDubRewindAtJoinNoSilence(t *testing.T) {
-	const sr = sampleRate
-	raw := dubRaw(3 * sr)
-	// the second fitted line reads 0.1 s behind the first segment's end:
-	// a fit artifact, not an edit. The reader must serve the recent frame
-	// instead of writing silence until it catches up.
-	tm := &timingMap{Segments: []segment{
-		{DubStart: 0, DubEnd: 1, RefStart: 0, RefEnd: 1, Slope: 1},
-		{DubStart: 0.9, DubEnd: 2, RefStart: 1, RefEnd: 2, Slope: 1, Intercept: 0.1},
-	}}
-	var out bytes.Buffer
-	if err := resampleDub(bytes.NewReader(raw), &out, tm, 2.0, 0); err != nil {
-		t.Fatalf("resampleDub: %v", err)
-	}
-	res := out.Bytes()
-	for frame := 0; frame < 2*sr; frame++ {
-		if got := sampleL(res, frame); got == 0 {
-			t.Fatalf("frame %d at the rewinding join is silent", frame)
-		}
-	}
-}
-
 func TestResampleDubStretchedMap(t *testing.T) {
 	// ref = 2*dub: the dub plays at half speed, so consecutive output
-	// samples interpolate around the same dub index. The two-frame cache
-	// must keep the s0 term (a one-frame cache dropped it before).
+	// samples interpolate around the same dub index.
 	raw := make([]byte, 1000*4)
 	for i := 0; i < 1000; i++ {
 		binary.LittleEndian.PutUint16(raw[i*4:], uint16(2*i))
 		binary.LittleEndian.PutUint16(raw[i*4+2:], uint16(2*i))
 	}
-	tm := oneSegment(0.02, 0, 0.04, 2, 0)
 	var out bytes.Buffer
-	if err := resampleDub(bytes.NewReader(raw), &out, tm, 0.04, 0); err != nil {
+	if err := resampleDub(bytes.NewReader(raw), &out, line{speed: 2}, 0.04, 0.02, 0); err != nil {
 		t.Fatalf("resampleDub: %v", err)
 	}
 	res := out.Bytes()
@@ -205,15 +176,40 @@ func TestResampleDubStretchedMap(t *testing.T) {
 	}
 }
 
+func TestResampleDubPALStretch(t *testing.T) {
+	const sr = sampleRate
+	// a PAL-speedup dub (4.27 % faster) is stretched onto the reference:
+	// output frame t reads dub position t/1.0427, interpolated
+	raw := rampRaw(10000, 30000)
+	l := line{speed: 1.0427}
+	var out bytes.Buffer
+	refDur := 2.0 * 1.0427
+	if err := resampleDub(bytes.NewReader(raw), &out, l, refDur, 2.0, 0); err != nil {
+		t.Fatalf("resampleDub: %v", err)
+	}
+	res := out.Bytes()
+	if len(res) != int(refDur*sr)*4 {
+		t.Fatalf("output size: got %d, want %d", len(res), int(refDur*sr)*4)
+	}
+	for _, frame := range []int{0, 1, 5000, 10008} {
+		idx := float64(frame) / 1.0427
+		i0 := int(math.Floor(idx))
+		frac := idx - float64(i0)
+		want := int(float64(i0%30000)*(1-frac) + float64((i0+1)%30000)*frac)
+		if got := int(sampleL(res, frame)); math.Abs(float64(got-want)) > 1 {
+			t.Errorf("frame %d: got %d, want ~%d (stretched)", frame, got, want)
+		}
+	}
+}
+
 func TestResampleDubAudioLead(t *testing.T) {
 	const sr = sampleRate
 	raw := dubRaw(2 * sr)
 
 	// the raw extraction dropped 0.5 s of leading silence: output 0.5 s
 	// must address the first extracted frame, not the middle of the track
-	tm := oneSegment(2, 0, 2, 1, 0)
 	var out bytes.Buffer
-	if err := resampleDub(bytes.NewReader(raw), &out, tm, 2.0, 0.5); err != nil {
+	if err := resampleDub(bytes.NewReader(raw), &out, line{speed: 1}, 2.0, 2.0, 0.5); err != nil {
 		t.Fatalf("resampleDub: %v", err)
 	}
 	res := out.Bytes()
@@ -244,7 +240,7 @@ func TestDubFramesNegativeIndex(t *testing.T) {
 }
 
 func TestDubFramesRepeatAccess(t *testing.T) {
-	// the cache contract: i0 then i0+1 then i0 again (a stretched map
+	// the ring contract: i0 then i0+1 then i0 again (a stretched map
 	// repeats i0) must serve the same frames, never silence
 	d := &dubFrames{br: bufio.NewReader(bytes.NewReader(dubRaw(50)))}
 	for _, i := range []int64{0, 1, 1, 2, 1, 3, 3, 2} {
@@ -263,9 +259,8 @@ func TestResampleDubTrailingPartialFrame(t *testing.T) {
 	// silence, not an error
 	full := dubRaw(100)
 	raw := full[:len(full)-2] // half a frame
-	tm := oneSegment(1, 0, 1, 1, 0)
 	var out bytes.Buffer
-	if err := resampleDub(bytes.NewReader(raw), &out, tm, 1.0, 0); err != nil {
+	if err := resampleDub(bytes.NewReader(raw), &out, line{speed: 1}, 1.0, 1.0, 0); err != nil {
 		t.Fatalf("resampleDub: %v", err)
 	}
 	res := out.Bytes()
@@ -282,40 +277,6 @@ func TestResampleDubTrailingPartialFrame(t *testing.T) {
 	}
 }
 
-func TestResampleDubSilenceMatchesMapGaps(t *testing.T) {
-	const sr = sampleRate
-	raw := dubRaw(10 * sr)
-	// reference 0-12 s: 5 s of audio, a 2 s removed scene, then 5 s of
-	// audio mapped from dub 5-10 s. Only the removed scene is silent.
-	tm := &timingMap{Segments: []segment{
-		{DubStart: 0, DubEnd: 5, RefStart: 0, RefEnd: 5, Slope: 1},
-		{DubStart: 5, DubEnd: 10, RefStart: 7, RefEnd: 12, Slope: 1, Intercept: 2},
-	}}
-	var out bytes.Buffer
-	if err := resampleDub(bytes.NewReader(raw), &out, tm, 12.0, 0); err != nil {
-		t.Fatalf("resampleDub: %v", err)
-	}
-	res := out.Bytes()
-	if len(res) != 12*sr*4 {
-		t.Fatalf("output size: got %d, want %d", len(res), 12*sr*4)
-	}
-	silent := 0
-	for frame := 0; frame < 12*sr; frame++ {
-		if sampleL(res, frame) == 0 {
-			silent++
-		}
-	}
-	if silent < 2*sr || silent > 2*sr+2 {
-		t.Errorf("silent samples: got %d (%.3f s), want ~%d (2 s)", silent, float64(silent)/sr, 2*sr)
-	}
-	for _, frame := range []int{5*sr - 1, 5 * sr, 7*sr - 1, 7*sr + int(fadeSeconds*sr), 12*sr - 1} {
-		silentHere := sampleL(res, frame) == 0
-		if want := frame >= 5*sr && frame < 7*sr; silentHere != want {
-			t.Errorf("frame %d: silent=%v, want %v", frame, silentHere, want)
-		}
-	}
-}
-
 func TestResampleDubInterpolates(t *testing.T) {
 	// a rising ramp: sample i holds value 2*i; a half-sample offset
 	// must interpolate to the odd value between neighbors
@@ -325,9 +286,9 @@ func TestResampleDubInterpolates(t *testing.T) {
 		binary.LittleEndian.PutUint16(raw[i*4:], uint16(2*i))
 		binary.LittleEndian.PutUint16(raw[i*4+2:], uint16(2*i))
 	}
-	tm := oneSegment(1, 0, 1, 1, -0.5/float64(sampleRate))
+	l := line{speed: 1, intercept: -0.5 / float64(sampleRate)}
 	var out bytes.Buffer
-	if err := resampleDub(bytes.NewReader(raw), &out, tm, 1.0, 0); err != nil {
+	if err := resampleDub(bytes.NewReader(raw), &out, l, 1.0, 1.0, 0); err != nil {
 		t.Fatalf("resampleDub: %v", err)
 	}
 	res := out.Bytes()

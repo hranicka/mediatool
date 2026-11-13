@@ -1,11 +1,13 @@
 // Package align appends a dubbed audio track to a reference video by
-// scene matching: frames sampled from both files are perceptually hashed
-// (shared with dedup via vhash), each dubbed frame is matched against the
-// reference, and a piecewise timing map (affine segments with outlier
-// rejection) drives the resampling of the dub onto the reference timeline.
-// A single pair can be aligned ad hoc, or a whole directory can be paired
-// by episode/title naming (weak episode-tag matches verified by video
-// content) and processed in place with .old backups.
+// timing the dub onto the reference timeline: frames sampled from both
+// files are perceptually hashed (shared with dedup via vhash) and one
+// affine timing line (ref = offset + speed × dub) is fitted robustly —
+// dub masters often run at a different speed (PAL speedup, NTSC
+// transfers) and may start or end earlier or later than the reference
+// (a modified intro or credits). A single pair can be aligned ad hoc, or
+// a whole directory can be paired by episode/title naming (weak
+// episode-tag matches verified by video content) and processed in place
+// with .old backups.
 package align
 
 import (
@@ -389,19 +391,19 @@ func (t *tool) runOne() error {
 	t.rep.Header(kvs)
 
 	start := time.Now()
-	tm, err := t.buildMap(in)
+	fit, err := t.buildFit(in)
 	if err != nil {
 		return err
 	}
-	t.printMap(tm, in)
+	t.printFit(fit, in)
 	if t.cfg.DryRun {
-		t.rep.Summary("Done.", "Timing map built", "", ui.Outcome{Done: 1, Elapsed: time.Since(start)})
+		t.rep.Summary("Done.", "Timing fitted", "", ui.Outcome{Done: 1, Elapsed: time.Since(start)})
 		return nil
 	}
 
 	t.rep.Start("Aligning", 1, 1, t.cfg.Ref, media.HumanBytes(in.refSize), time.Duration(in.refDur*float64(time.Second)),
 		fmt.Sprintf("dub audio: %s", t.dubAudioLabel(in)))
-	if err := t.muxAligned(in, tm, t.cfg.Out, outFmt); err != nil {
+	if err := t.muxAligned(in, fit, t.cfg.Out, outFmt); err != nil {
 		return err
 	}
 	newSize := int64(0)
@@ -557,8 +559,8 @@ func (t *tool) dubAudioLabel(in *inputs) string {
 	return s
 }
 
-// buildMap hashes both files and builds the segmented timing map.
-func (t *tool) buildMap(in *inputs) (*timingMap, error) {
+// buildFit hashes both files and fits the timing line.
+func (t *tool) buildFit(in *inputs) (*timingFit, error) {
 	refHashes, err := t.hashFrames(in.ref, "reference")
 	if err != nil {
 		return nil, fmt.Errorf("reference: %w", err)
@@ -568,9 +570,6 @@ func (t *tool) buildMap(in *inputs) (*timingMap, error) {
 		return nil, fmt.Errorf("dubbed: %w", err)
 	}
 	slog.Debug("frames", "ref", len(refHashes), "dub", len(dubHashes))
-	if len(refHashes) == 0 || len(dubHashes) == 0 {
-		return nil, fmt.Errorf("no frames extracted (reference %d, dubbed %d)", len(refHashes), len(dubHashes))
-	}
 
 	// self-similarity guard: on synthetic or static content a match is
 	// barely better evidence than chance, however small its distance
@@ -579,21 +578,10 @@ func (t *tool) buildMap(in *inputs) (*timingMap, error) {
 	bgDub := vhash.BackgroundDistance(dubHashes, minFrames, 200)
 	bg := minPositive(bgRef, bgDub)
 	if bg >= 0 && bg < vhash.SelfSimilarBits {
-		t.rep.Note(fmt.Sprintf("note: frames are highly self-similar (background median %d of %d bits) - scene matches carry little evidence, verify the timing map carefully", bg, vhash.Side*vhash.Side))
+		t.rep.Note(fmt.Sprintf("note: frames are highly self-similar (background median %d of %d bits) - scene matches carry little evidence, verify the timing report carefully", bg, vhash.Side*vhash.Side))
 	}
 
-	// A narrow local walk follows a constant speed difference; bigger
-	// jumps (a late start, a skipped or an extra scene) go through resync.
-	window := max(4, int(math.Round(0.5/t.cfg.Interval)))
-	matches := findMatches(refHashes, dubHashes, window, t.cfg.MatchDist, t.cfg.Interval)
-	tm, err := buildTimingMap(matches, t.cfg.Interval, in.refDur, in.dubDur, t.cfg.MatchDist)
-	if err != nil {
-		return nil, err
-	}
-	if err := tm.checkCoverage(); err != nil {
-		return nil, err
-	}
-	return tm, nil
+	return fitTiming(refHashes, dubHashes, in.refDur, in.dubDur, t.cfg.Interval, t.cfg.MatchDist)
 }
 
 // cacheLabel renders the frame cache setting for the run header.
@@ -665,63 +653,60 @@ func (t *tool) cleanCache() error {
 	return nil
 }
 
-// printMap renders the piecewise timing map: segment spans, reference-only
-// gaps and a coarse offset table.
-func (t *tool) printMap(tm *timingMap, in *inputs) {
-	t.rep.Raw(ui.GoodTone, "Timing map: %d reliable matches, %d outliers dropped\n", tm.NRel, tm.NOut)
-	t.rep.Raw(ui.Neutral, "  covers %.1f%% of the reference and %.1f%% of the dub; %d segment(s)\n",
-		tm.RefCoverage*100, tm.DubCoverage*100, len(tm.Segments))
-	worst := 0.0
-	for _, s := range tm.Segments {
-		worst = max(worst, s.Residual)
+// printFit renders the fitted timing line: the speed with its
+// known-conversion label, the evidence supporting the fit, the silent and
+// dropped spans at the ends, and an offset table.
+func (t *tool) printFit(fit *timingFit, in *inputs) {
+	l := fit.Line
+	line := fmt.Sprintf("Timing line: ref = %+.2fs + %.5f × dub", l.intercept, l.speed)
+	if note := speedNote(l.speed); note != "" {
+		line += " (" + note + ")"
 	}
-	t.rep.Raw(ui.Neutral, "  sampling grid %dms, worst segment residual %dms\n",
-		int(math.Round(t.cfg.Interval*1000)), int(math.Round(worst*1000)))
-	if tm.Fallback {
-		t.rep.Raw(ui.WarnTone, "  note: the piecewise map was fragmented - using one global fit instead\n")
-	}
-	for i, s := range tm.Segments {
-		t.rep.Raw(ui.Neutral, "  segment %d: dub %s-%s -> ref %s-%s (slope %.4f, residual %dms)\n",
-			i+1, clock(s.DubStart), clock(s.DubEnd), clock(s.RefStart), clock(s.RefEnd), s.Slope, int(math.Round(s.Residual*1000)))
-	}
-	const gapReport = 0.02
-	var gaps [][2]float64
-	prevEnd := 0.0
-	for _, s := range tm.Segments {
-		if s.RefStart-prevEnd >= gapReport {
-			gaps = append(gaps, [2]float64{prevEnd, s.RefStart})
+	t.rep.Raw(ui.GoodTone, "%s\n", line)
+	t.rep.Raw(ui.Neutral, "  durations: ref %s, dub %s (ratio %.4f vs fitted speed %.5f)\n",
+		clock(in.refDur), clock(in.dubDur), fit.DurRatio, l.speed)
+	if d1 := math.Abs(l.speed - 1); d1 > directionTol {
+		if d2 := math.Abs(fit.DurRatio - 1); d2 > directionTol && (l.speed-1)*(fit.DurRatio-1) < 0 {
+			t.rep.Note("note: the duration ratio points the opposite way from the fitted speed - a modified intro/credits or a different cut explains this, but verify the pairing")
 		}
-		prevEnd = max(prevEnd, s.RefEnd)
 	}
-	if in.refDur-prevEnd >= gapReport {
-		gaps = append(gaps, [2]float64{prevEnd, in.refDur})
+	t.rep.Raw(ui.Neutral, "  %d of %d dub frames in the shared span match (%.0f%%), span support %.0f%%\n",
+		fit.NInliers, fit.NFine, fit.InlierFrac*100, fit.SpanSupport*100)
+	t.rep.Raw(ui.Neutral, "  median residual %dms, p95 %dms, sampling grid %dms\n",
+		int(math.Round(fit.MedianResid*1000)), int(math.Round(fit.P95Resid*1000)), int(math.Round(t.cfg.Interval*1000)))
+	// reference regions with no dub counterpart stay silent on the dub
+	// track; dub regions without a reference counterpart are dropped.
+	// Spans under half a second are fade noise and not reported.
+	if head := l.intercept; head > 0.5 {
+		t.rep.Raw(ui.WarnTone, "  silent head: %s of the reference has no dub audio\n", clock(head))
 	}
-	totalGap, longestGap := 0.0, 0.0
-	for _, g := range gaps {
-		d := g[1] - g[0]
-		totalGap += d
-		longestGap = max(longestGap, d)
-		t.rep.Raw(ui.WarnTone, "  gap: ref %.2fs-%.2fs (%.2fs) has no dub counterpart (dub track silent)\n", g[0], g[1], d)
+	if head := -l.intercept / l.speed; head > 0.5 {
+		t.rep.Raw(ui.WarnTone, "  dropped head: the dub's first %s have no reference counterpart\n", clock(head))
 	}
-	if len(gaps) > 0 {
-		t.rep.Raw(ui.WarnTone, "  silence: %d gap(s), %.2fs total, longest %.2fs\n", len(gaps), totalGap, longestGap)
+	mappedEnd := l.refAt(in.dubDur)
+	if tail := in.refDur - mappedEnd; tail > 0.5 {
+		t.rep.Raw(ui.WarnTone, "  silent tail: %s of the reference after the dub has no dub audio\n", clock(tail))
 	}
-	first, last := tm.Segments[0], tm.Segments[len(tm.Segments)-1]
-	t.rep.Raw(ui.Neutral, "dub %.2fs -> ref %.2fs; dub %.2fs -> ref %.2fs\n",
-		first.DubStart, first.RefStart, last.DubEnd, last.RefEnd)
+	if drop := (mappedEnd - in.refDur) / l.speed; drop > 0.5 {
+		t.rep.Raw(ui.WarnTone, "  dropped tail: the dub's last %s run past the reference end\n", clock(drop))
+	}
+	if shortest := math.Min(in.refDur, in.dubDur); shortest > 0 && fit.Overlap < warnOverlap*shortest {
+		t.rep.Note(fmt.Sprintf("note: the files share only %.0f%% of their content (modified intro/credits or a different cut)", fit.Overlap/shortest*100))
+	}
 	step := max(1, (int(in.dubDur)+9)/10)
-	for s := 0; s < int(in.dubDur); s += step {
-		if ref, ok := tm.refAtDub(float64(s)); ok {
-			t.rep.Raw(ui.Neutral, "  dub %5ds -> ref %7.2fs  (offset %+.2fs)\n", s, ref, ref-float64(s))
+	for s := 0; s <= int(in.dubDur); s += step {
+		ref := l.refAt(float64(s))
+		if ref < 0 || ref > in.refDur {
+			t.rep.Raw(ui.Neutral, "  dub %5ds -> (outside the reference)\n", s)
 		} else {
-			t.rep.Raw(ui.Neutral, "  dub %5ds -> (no reference counterpart)\n", s)
+			t.rep.Raw(ui.Neutral, "  dub %5ds -> ref %8.2fs  (offset %+.2fs)\n", s, ref, ref-float64(s))
 		}
 	}
 }
 
 // muxAligned extracts the dubbed audio, resamples it onto the reference
 // timeline and muxes every reference stream plus the new track.
-func (t *tool) muxAligned(in *inputs, tm *timingMap, outPath, outFmt string) error {
+func (t *tool) muxAligned(in *inputs, fit *timingFit, outPath, outFmt string) error {
 	work, err := os.MkdirTemp("", "mediatool-align-")
 	if err != nil {
 		return err
@@ -751,7 +736,7 @@ func (t *tool) muxAligned(in *inputs, tm *timingMap, outPath, outFmt string) err
 	if err != nil {
 		return err
 	}
-	if err := resampleDub(src, dst, tm, in.refDur, in.dubAudioLead); err != nil {
+	if err := resampleDub(src, dst, fit.Line, in.refDur, in.dubDur, in.dubAudioLead); err != nil {
 		dst.Close()
 		return err
 	}

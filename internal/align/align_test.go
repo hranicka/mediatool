@@ -143,19 +143,12 @@ func TestAlignRunAll(t *testing.T) {
 	}
 
 	got := out.String()
-	if !strings.Contains(got, "Timing map: 90 reliable matches, 0 outliers dropped") {
-		t.Errorf("missing timing map line: %s", got)
+	if !strings.Contains(got, "Timing line: ref = +2.00s + 1.00000 × dub (same speed)") {
+		t.Errorf("missing timing line: %s", got)
 	}
-	// the +2 s shift must show up at both ends of the map
-	if !strings.Contains(got, "dub 0.00s -> ref 2.00s; dub 18.00s -> ref 20.00s") {
-		t.Errorf("missing map endpoints: %s", got)
-	}
-	// the unmatched reference head is a real gap and must be reported
-	if !strings.Contains(got, "gap: ref 0.00s-2.00s (2.00s)") {
-		t.Errorf("missing head gap line: %s", got)
-	}
-	if !strings.Contains(got, "silence: 1 gap(s), 2.00s total, longest 2.00s") {
-		t.Errorf("missing silence summary: %s", got)
+	// the unmatched reference head is reported as a silent span
+	if !strings.Contains(got, "silent head: 0:00:02 of the reference has no dub audio") {
+		t.Errorf("missing silent head line: %s", got)
 	}
 	if !strings.Contains(got, "Created: "+outPath) {
 		t.Errorf("missing created line: %s", got)
@@ -270,7 +263,7 @@ func TestAlignDryRun(t *testing.T) {
 	if !strings.Contains(got, "Extra         : DRY RUN") {
 		t.Errorf("missing dry-run header: %s", got)
 	}
-	if !strings.Contains(got, "Timing map built") {
+	if !strings.Contains(got, "Timing fitted") {
 		t.Errorf("missing dry-run summary: %s", got)
 	}
 	if len(ff.streamLog) != 0 {
