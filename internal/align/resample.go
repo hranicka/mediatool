@@ -99,7 +99,10 @@ func resampleDub(src io.Reader, dst io.Writer, m *timingMap, refDur, audioLead f
 				continue
 			}
 			seg := segs[segIdx]
-			idx := ((sec-seg.Intercept)/seg.Slope - audioLead) * float64(sampleRate)
+			// invert the segment line plus the audio calibration (see
+			// segment.calibratedRefAt): the track measured early by lag(r)
+			// must read lag(r)/slope later, and late must read earlier
+			idx := (((sec-seg.CalOffset)/(1+seg.CalSlope)-seg.Intercept)/seg.Slope - audioLead) * float64(sampleRate)
 			i0 := int64(math.Floor(idx))
 			frac := float32(idx - float64(i0))
 			s0, _ := d.frame(i0)

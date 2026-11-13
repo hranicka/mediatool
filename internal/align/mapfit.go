@@ -146,11 +146,16 @@ type timedMatch struct {
 // [RefStart, RefEnd) plays dub audio from [DubStart, DubEnd) through the
 // segment's line. All segments share one speed; the reference gaps
 // between segments are edits (removed scenes) and stay silent.
+// CalOffset/CalSlope are the audio calibration (measured dub-early lag
+// against the reference audio): the dub content plays
+// calibratedRefAt(dub) instead of the raw line.
 type segment struct {
 	DubStart, DubEnd float64
 	RefStart, RefEnd float64
 	Slope            float64
 	Intercept        float64
+	CalOffset        float64 // measured lag at reference time zero, seconds
+	CalSlope         float64 // measured lag drift per reference second
 	Matches          int
 	Residual         float64 // median absolute match residual in seconds
 }
@@ -158,6 +163,15 @@ type segment struct {
 func (s segment) refAt(dub float64) float64 { return s.Intercept + s.Slope*dub }
 
 func (s segment) dubAt(ref float64) float64 { return (ref - s.Intercept) / s.Slope }
+
+// calibratedRefAt maps dubbed time to reference time through the segment
+// line plus the audio calibration. lag(t) = CalOffset + CalSlope*t is the
+// measured lag of the dub track (dub-early positive): the track measured
+// late (negative lag) must play earlier, so the corrected play time of
+// dub position p is (refAt(p) + CalOffset) / (1 - CalSlope).
+func (s segment) calibratedRefAt(dub float64) float64 {
+	return (s.refAt(dub) + s.CalOffset) / (1 - s.CalSlope)
+}
 
 // timingMap is the align result: the piecewise map plus the evidence that
 // supports it.
@@ -799,7 +813,8 @@ func buildMap(groups [][]timedMatch, speed, interval, refDur, dubDur float64, rn
 }
 
 // refAtDub maps dubbed time to reference time through the covering
-// segment, reporting whether the time is covered.
+// segment (with its audio calibration), reporting whether the time is
+// covered.
 func (m *timingMap) refAtDub(dub float64) (float64, bool) {
 	i := sort.Search(len(m.Segments), func(i int) bool {
 		return m.Segments[i].DubEnd > dub
@@ -807,7 +822,7 @@ func (m *timingMap) refAtDub(dub float64) (float64, bool) {
 	if i >= len(m.Segments) || dub < m.Segments[i].DubStart {
 		return 0, false
 	}
-	return m.Segments[i].refAt(dub), true
+	return m.Segments[i].calibratedRefAt(dub), true
 }
 
 // knownSpeeds labels the fitted speed when it sits within half a

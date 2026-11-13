@@ -2,7 +2,6 @@ package align
 
 import (
 	"bytes"
-	"fmt"
 	"math"
 	"math/rand"
 	"os"
@@ -102,16 +101,19 @@ func TestSegmentLagsAndApplyShifts(t *testing.T) {
 		{DubStart: 0, DubEnd: 30, RefStart: 0, RefEnd: 30, Slope: 1, Intercept: 0},
 		{DubStart: 30, DubEnd: span, RefStart: 30, RefEnd: span, Slope: 1, Intercept: 0},
 	}}
-	shifts, notes, evidence := segmentLags(m, ref, dub)
+	fits, notes, evidence := segmentLags(m, ref, dub)
 	if evidence != 2 {
 		t.Fatalf("evidence: got %d, want 2 (notes %v)", evidence, notes)
 	}
-	if math.Abs(shifts[0]-(-0.5)) > 0.05 || math.Abs(shifts[1]-(-0.7)) > 0.05 {
-		t.Errorf("shifts: got %+.3f/%+.3f, want -0.5/-0.7", shifts[0], shifts[1])
+	if math.Abs(fits[0].offset-(-0.5)) > 0.05 || math.Abs(fits[1].offset-(-0.7)) > 0.05 {
+		t.Errorf("fits: got %+.3f/%+.3f, want -0.5/-0.7", fits[0].offset, fits[1].offset)
 	}
-	applyShifts(m, shifts, span, span)
-	if math.Abs(m.Segments[0].Intercept-(-0.5)) > 0.05 || math.Abs(m.Segments[1].Intercept-(-0.7)) > 0.05 {
-		t.Errorf("intercepts after apply: %.4f/%.4f", m.Segments[0].Intercept, m.Segments[1].Intercept)
+	if math.Abs(fits[0].drift) > 2e-5 {
+		t.Errorf("constant-lag fixture must not fit a drift, got %.5f", fits[0].drift)
+	}
+	applyCalibration(m, fits, span, span)
+	if math.Abs(m.Segments[0].CalOffset-(-0.5)) > 0.05 || math.Abs(m.Segments[1].CalOffset-(-0.7)) > 0.05 {
+		t.Errorf("calibration after apply: %.4f/%.4f", m.Segments[0].CalOffset, m.Segments[1].CalOffset)
 	}
 	// the first span would start before the file and clamps to 0
 	if m.Segments[0].RefStart != 0 {
@@ -196,25 +198,4 @@ func s16leStereo(pcm []float32) []byte {
 func binaryPut16(b []byte, v uint16) {
 	b[0] = byte(v)
 	b[1] = byte(v >> 8)
-}
-
-func TestDebugSegmentLags(t *testing.T) {
-	const span = 60.0
-	ref := patternPCM(calSampleRate, span, 0)
-	// the dub track plays the content 0.33 s early (as the integration
-	// fixture's map+capture combination produces)
-	dub := patternPCM(calSampleRate, span, -0.33)
-	m := &timingMap{Speed: 1, Segments: []segment{
-		{DubStart: 0, DubEnd: 58, RefStart: 1, RefEnd: 59, Slope: 1, Intercept: 0.5},
-	}}
-	lags := []float64{}
-	win := math.Min(calWindow, math.Max(12, (59-1-2)/3))
-	for c := 1.0 + calMargin; c <= 59-calMargin-win; c += calHop {
-		lag, cos := windowLag(ref, dub, c, win, 4)
-		lags = append(lags, lag)
-		fmt.Printf("c=%.0f lag %+.3f cos %.3f\n", c, lag, cos)
-	}
-	_ = lags
-	shifts, notes, evidence := segmentLags(m, ref, dub)
-	fmt.Printf("shifts %v notes %v evidence %d\n", shifts, notes, evidence)
 }

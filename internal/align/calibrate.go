@@ -14,14 +14,18 @@ import (
 // Audio-based calibration of the timing map. The frame matches align the
 // dub's VIDEO to the reference video, but the dub file's audio stream can
 // sit at its own offset relative to the dub video - broadcast captures
-// routinely carry a few hundred milliseconds - and can drift against the
-// video clock. That offset is invisible to frame matching and shifts the
-// whole dub track out of lipsync. After a first resample, the shared
-// music/effects bed between the language versions is cross-correlated
-// window by window on the reference timeline (raw waveform, so beat
-// ambiguity cannot bias the peak); the per-segment median lag shifts the
-// map's intercepts, and the resample is repeated until the measured lag
-// vanishes.
+// routinely carry a few hundred milliseconds, different per episode.
+// That is invisible to frame matching and shifts the whole dub track out
+// of lipsync. After a first resample, the shared music/effects bed
+// between the language versions is cross-correlated window by window on
+// the reference timeline (raw waveform, so beat ambiguity cannot bias
+// the peak); each segment's median lag becomes the segment's calibration
+// constant, and the resample is repeated once to verify it settled.
+// A per-segment LINE (constant + drift slope) was tried and rejected: the
+// measured residuals carry local steps (sub-frame audio edits) that a
+// slope fit extrapolates over whole segments, making the sync worse; the
+// per-segment constants absorb the observed clock drift at their
+// centers, leaving at most a few tens of milliseconds inside a segment.
 
 const (
 	calSampleRate = 8000 // measurement PCM rate
@@ -30,19 +34,18 @@ const (
 	calLag        = 4.0  // lag search radius, seconds
 	calMargin     = 1.0  // keep windows this far from segment edges
 	calMinWindows = 3    // windows per segment before its median counts
-	calAgreement  = 0.4  // at least this share of windows must sit within
-	// calAgreeBand of the median lag: the true lag curve is smooth, so
-	// scattered windows are correlation garbage, not evidence
-	calAgreeBand = 0.15
-	calMaxShift  = 2.0  // refuse to move a segment by more than this
-	calDone      = 0.06 // residual lag below this needs no further round
-	calRounds    = 3    // measure-shift rounds at most
+	calAgreeBand  = 0.15 // windows within this of the median agree
+	calAgreement  = 0.4  // share of agreeing windows a segment needs
+	calMaxLag     = 2.0  // implausible measured lag, seconds
+	calDone       = 0.03 // residual below this needs no further round
+	calRounds     = 3    // measure-fit rounds at most
 )
 
 // calibrateAudio measures the per-segment audio lag of the resampled dub
 // (resRawPath, s16le stereo as written by resampleDub) against the
-// reference audio and shifts the map's intercepts by it, repeating the
-// resample until the measured lag vanishes. It reports every round.
+// reference audio, stores each segment's median lag as its calibration
+// constant, and repeats the resample once to verify it settled. It
+// reports every round.
 func (t *tool) calibrateAudio(in *inputs, m *timingMap, dubRaw, resRawPath string) error {
 	refPCM, err := t.extractCalibrationPCM(in.ref, in.refInfo)
 	if err != nil {
@@ -54,33 +57,24 @@ func (t *tool) calibrateAudio(in *inputs, m *timingMap, dubRaw, resRawPath strin
 		if err != nil {
 			return err
 		}
-		shifts, notes, evidence := segmentLags(m, refPCM, dubPCM)
-		applyShifts(m, shifts, in.refDur, in.dubDur)
+		fits, notes, evidence := segmentLags(m, refPCM, dubPCM)
+		applyCalibration(m, fits, in.refDur, in.dubDur)
 		if evidence == 0 {
 			for _, n := range notes {
 				t.rep.Note("note: audio calibration: " + n)
 			}
 			return fmt.Errorf("no window correlated strongly enough (check the pairing and the reference audio)")
 		}
-		line := "audio calibration:"
-		applied := 0
-		for i := range m.Segments {
-			line += fmt.Sprintf(" segment %d %+.2fs,", i+1, shifts[i])
-			if shifts[i] != 0 {
-				applied++
-			}
-		}
-		line = line[:len(line)-1]
 		if round == 0 {
-			t.rep.Raw(ui.Neutral, "%s\n", line)
+			t.rep.Raw(ui.Neutral, "%s\n", calibrationLine(m, fits))
 			for _, n := range notes {
 				t.rep.Note("note: audio calibration: " + n)
 			}
 		} else {
-			lastReport = line
+			lastReport = calibrationLine(m, fits)
 		}
-		if applied == 0 {
-			return nil // converged: nothing left to shift
+		if !anyFitSignificant(fits) {
+			return nil // converged: the residual is within the noise floor
 		}
 		if err := t.resampleAgain(dubRaw, resRawPath, m, in); err != nil {
 			return err
@@ -92,77 +86,115 @@ func (t *tool) calibrateAudio(in *inputs, m *timingMap, dubRaw, resRawPath strin
 	return nil
 }
 
-// segmentLags measures the audio lag per segment and returns the
-// intercept shifts, notes for segments without evidence, and the number
-// of segments with evidence. A positive shift means the dub track was
-// measured EARLY, so the intercept grows; a negative one means late.
-func segmentLags(m *timingMap, refPCM, dubPCM []float32) (shifts []float64, notes []string, evidence int) {
-	shifts = make([]float64, len(m.Segments))
+// lagFit is one segment's fitted lag line: the dub track is measured
+// early by lag(t) = offset + drift*t (reference time t).
+type lagFit struct {
+	offset, drift float64
+}
+
+func (f lagFit) significant() bool {
+	return math.Abs(f.offset) >= calDone || math.Abs(f.drift) >= 1e-5
+}
+
+// calibrationLine renders the per-segment measured lag at each segment's
+// center.
+func calibrationLine(m *timingMap, fits []lagFit) string {
+	line := "audio calibration:"
+	for i, f := range fits {
+		mid := (m.Segments[i].RefStart + m.Segments[i].RefEnd) / 2
+		lag := f.offset + f.drift*mid
+		line += fmt.Sprintf(" segment %d %+.2fs", i+1, lag)
+		line += ","
+	}
+	return line[:len(line)-1]
+}
+
+func anyFitSignificant(fits []lagFit) bool {
+	for _, f := range fits {
+		if f.significant() {
+			return true
+		}
+	}
+	return false
+}
+
+// segmentLags measures the audio lag per segment and fits a constant
+// (the median of the window lags). Segments without enough agreeing
+// windows get no fit; a segment whose lag does not settle is reported.
+func segmentLags(m *timingMap, refPCM, dubPCM []float32) (fits []lagFit, notes []string, evidence int) {
+	fits = make([]lagFit, len(m.Segments))
 	for i, s := range m.Segments {
 		span := s.RefEnd - s.RefStart - 2*calMargin
 		if span < 8 {
 			notes = append(notes, fmt.Sprintf("segment %d: too short to measure (%.1fs), left as fitted", i+1, s.RefEnd-s.RefStart))
 			continue
 		}
-		// short segments take a shorter window so at least a few fit
 		win := math.Min(calWindow, math.Max(12, span/3))
 		lagRadius := math.Min(calLag, span/2-1)
-		// windows fully inside the segment, away from its silent edges
-		var lags []float64
+		type pt struct{ t, lag float64 }
+		var pts []pt
 		for c := s.RefStart + calMargin; c <= s.RefEnd-calMargin-win; c += calHop {
 			if lag, _ := windowLag(refPCM, dubPCM, c, win, lagRadius); !math.IsNaN(lag) {
-				lags = append(lags, lag)
+				pts = append(pts, pt{t: c + win/2, lag: lag})
 			}
 		}
-		if len(lags) < calMinWindows {
-			notes = append(notes, fmt.Sprintf("segment %d: not enough audio evidence (%d windows), left as fitted", i+1, len(lags)))
+		if len(pts) < calMinWindows {
+			notes = append(notes, fmt.Sprintf("segment %d: not enough audio evidence (%d windows), left as fitted", i+1, len(pts)))
 			continue
 		}
-		shift := medianFloat(lags)
+		offs := make([]float64, len(pts))
+		for k, p := range pts {
+			offs[k] = p.lag
+		}
+		offset := medianFloat(offs)
 		agree := 0
-		for _, l := range lags {
-			if math.Abs(l-shift) <= calAgreeBand {
+		for _, p := range pts {
+			if math.Abs(p.lag-offset) <= calAgreeBand {
 				agree++
 			}
 		}
-		if float64(agree)/float64(len(lags)) < calAgreement {
-			notes = append(notes, fmt.Sprintf("segment %d: the audio lag does not settle (%.0f%% of windows agree), left as fitted", i+1, float64(agree)/float64(len(lags))*100))
+		if float64(agree)/float64(len(pts)) < calAgreement {
+			notes = append(notes, fmt.Sprintf("segment %d: the audio lag does not settle (%.0f%% of windows agree), left as fitted", i+1, float64(agree)/float64(len(pts))*100))
+			continue
+		}
+		if math.Abs(offset) > calMaxLag {
+			notes = append(notes, fmt.Sprintf("segment %d: measured audio lag %.2fs is implausible, left as fitted", i+1, offset))
 			continue
 		}
 		evidence++
-		if math.Abs(shift) > calMaxShift {
-			notes = append(notes, fmt.Sprintf("segment %d: measured audio lag %.2fs is implausible, left as fitted", i+1, shift))
-			continue
+		if !(lagFit{offset: offset}).significant() {
+			continue // already in sync within the measurement noise
 		}
-		if math.Abs(shift) < calDone {
-			continue // already in sync within measurement noise
-		}
-		shifts[i] = shift
+		fits[i] = lagFit{offset: offset}
 	}
 	// a segment without stable evidence inherits the previous segment's
-	// shift: the audio offset drifts slowly, so the neighbour's value is
+	// fit: the audio offset drifts slowly, so the neighbour's line is
 	// accurate to well within perception
-	for i := 1; i < len(shifts); i++ {
-		if shifts[i] == 0 && shifts[i-1] != 0 {
-			shifts[i] = shifts[i-1]
-			notes = append(notes, fmt.Sprintf("segment %d: weak audio evidence, inherited segment %d's shift", i+1, i))
+	for i := 1; i < len(fits); i++ {
+		if fits[i] == (lagFit{}) && fits[i-1] != (lagFit{}) {
+			fits[i] = fits[i-1]
+			notes = append(notes, fmt.Sprintf("segment %d: weak audio evidence, inherited segment %d's calibration", i+1, i))
 		}
 	}
-	return shifts, notes, evidence
+	return fits, notes, evidence
 }
 
-// applyShifts moves the map's intercepts by the measured shifts: the dub
-// track measured late (negative lag) plays earlier. Reference spans move
-// with the intercepts and are re-clamped to the file.
-func applyShifts(m *timingMap, shifts []float64, refDur, dubDur float64) {
+// applyCalibration adds the measured lag lines to the map's calibration
+// fields (rounds compose) and re-derives the reference spans, which move
+// with the calibrated play times.
+func applyCalibration(m *timingMap, fits []lagFit, refDur, dubDur float64) {
 	for i := range m.Segments {
-		if shifts[i] == 0 {
+		if fits[i] == (lagFit{}) {
 			continue
 		}
 		s := &m.Segments[i]
-		s.Intercept += shifts[i]
-		s.RefStart = math.Min(math.Max(s.RefStart+shifts[i], 0), refDur)
-		s.RefEnd = math.Min(math.Max(s.RefEnd+shifts[i], 0), refDur)
+		s.CalOffset += fits[i].offset
+		s.CalSlope += fits[i].drift
+		s.RefStart = math.Min(math.Max(s.calibratedRefAt(s.DubStart), 0), refDur)
+		s.RefEnd = math.Min(math.Max(s.calibratedRefAt(s.DubEnd), 0), refDur)
+		if s.RefEnd <= s.RefStart {
+			s.RefStart, s.RefEnd = 0, 0
+		}
 		s.DubStart = math.Max(0, s.dubAt(s.RefStart))
 		s.DubEnd = math.Min(dubDur, s.dubAt(s.RefEnd))
 		if s.DubEnd < s.DubStart {
