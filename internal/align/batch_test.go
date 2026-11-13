@@ -522,3 +522,43 @@ func TestResolveMixedTargets(t *testing.T) {
 		t.Error("-dub-suffix must be rejected in mixed mode")
 	}
 }
+
+func TestResolveMissingTarget(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "Show.mkv")
+	writeFile(t, file, 10)
+	missing := filepath.Join(dir, "missing.mkv")
+
+	if _, err := resolveTargets([]string{missing, dir}, &Config{}); err == nil {
+		t.Fatal("expected an error for a missing reference")
+	} else if !strings.Contains(err.Error(), "reference") || !strings.Contains(err.Error(), "no such file") {
+		t.Errorf("error must name the missing reference, got: %v", err)
+	}
+	if _, err := resolveTargets([]string{file, filepath.Join(dir, "nodir")}, &Config{}); err == nil {
+		t.Fatal("expected an error for a missing dub directory")
+	} else if !strings.Contains(err.Error(), "dubbed") || !strings.Contains(err.Error(), "no such file") {
+		t.Errorf("error must name the missing dubbed path, got: %v", err)
+	}
+}
+
+func TestResolveTildePath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	ref := filepath.Join(home, "Show.mkv")
+	writeFile(t, ref, 10)
+	dubDir := filepath.Join(home, "dub")
+	if err := os.Mkdir(dubDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	wantRef, _ := filepath.EvalSymlinks(ref)
+	wantDub, _ := filepath.EvalSymlinks(dubDir)
+
+	cfg := &Config{}
+	batch, err := resolveTargets([]string{"~/Show.mkv", "~/dub"}, cfg)
+	if err != nil {
+		t.Fatalf("quoted tilde paths must resolve: %v", err)
+	}
+	if !batch || !cfg.Mixed || cfg.Ref != wantRef || cfg.DubDir != wantDub {
+		t.Errorf("tilde file+dir resolved to %+v", cfg)
+	}
+}

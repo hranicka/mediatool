@@ -8,6 +8,7 @@
 package align
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -196,6 +197,9 @@ func Run(args []string) error {
 // resolveTargets decides between the single-pair and batch modes from the
 // positional arguments and fills the config.
 func resolveTargets(args []string, cfg *Config) (batch bool, err error) {
+	for i := range args {
+		args[i] = expandUserPath(args[i])
+	}
 	if len(args) < 1 || len(args) > 3 {
 		fmt.Fprintln(os.Stderr, usageText)
 		return false, fmt.Errorf("align needs a reference and a dubbed file, or two directories")
@@ -216,7 +220,7 @@ func resolveTargets(args []string, cfg *Config) (batch bool, err error) {
 		refInfo, refErr := os.Stat(args[0])
 		dubInfo, dubErr := os.Stat(args[1])
 		if refErr != nil || dubErr != nil {
-			return false, fmt.Errorf("both arguments must exist")
+			return false, positionalError(args, refErr, dubErr)
 		}
 		if refInfo.IsDir() != dubInfo.IsDir() {
 			// one file + one directory: search the directory for the
@@ -315,6 +319,44 @@ func resolveTargets(args []string, cfg *Config) (batch bool, err error) {
 		return false, fmt.Errorf("output %s must end in .mkv or .mp4", cfg.Out)
 	}
 	return false, nil
+}
+
+// expandUserPath expands a leading ~ to the user's home directory. The
+// shell skips this when the path is quoted, which would otherwise reach
+// os.Stat verbatim and look like a missing file.
+func expandUserPath(path string) string {
+	if path != "~" && !strings.HasPrefix(path, "~/") && !strings.HasPrefix(path, `~\`) {
+		return path
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return path
+	}
+	if path == "~" {
+		return home
+	}
+	return filepath.Join(home, path[2:])
+}
+
+// positionalError names each positional argument that os.Stat rejected,
+// instead of a generic "both arguments must exist".
+func positionalError(args []string, errs ...error) error {
+	var msgs []string
+	for i, err := range errs {
+		if err == nil {
+			continue
+		}
+		kind := "reference"
+		if i == 1 {
+			kind = "dubbed"
+		}
+		var pe *os.PathError
+		if errors.As(err, &pe) {
+			err = pe.Err
+		}
+		msgs = append(msgs, fmt.Sprintf("%s %q: %v", kind, args[i], err))
+	}
+	return fmt.Errorf("%s", strings.Join(msgs, "; "))
 }
 
 // runOne aligns a single reference/dub pair into a new file; both inputs

@@ -211,7 +211,9 @@ batch run**: the matched reference is replaced in place, with both inputs
 kept as `.old` (`-no-backup` removes them). This is the mode for "I have
 this one episode and a folder of dubs". `-pair-only`, `-n`, `-pair` and
 `-i` work; `-dub-suffix` does not apply. With no counterpart the run
-skips and prints the closest suggestion, touching nothing.
+skips and prints the closest suggestion, touching nothing. Positional
+paths may start with `~` even when quoted; a side that cannot be read is
+reported by name (reference or dubbed) with the OS reason.
 
 **Directory batch** pairs two directories and replaces each reference in
 place with the aligned file:

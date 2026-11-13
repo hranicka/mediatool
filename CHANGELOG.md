@@ -16,6 +16,10 @@
   ffmpeg output instead of buffering every sampled frame, Hamming distance
   uses 64-bit popcounts, and run fitting is incremental, keeping the finer
   sampling cheap in memory and CPU.
+- **`align` path handling** — a leading `~` in a positional path is
+  expanded even when the shell did not do it (quoted paths), and a
+  reference or dub that cannot be read is reported by name with the OS
+  reason instead of a generic "both arguments must exist".
 - **`align` batch mode** — pairs a whole directory of references with
   dubbed versions and aligns each couple in place: the reference is
   replaced by the aligned file, the original reference and the dub are
