@@ -47,7 +47,7 @@ func (t *tool) runBatch() error {
 		kvs = append(kvs, ui.Pair("Dubbed dir", dubSide))
 	}
 	kvs = append(kvs,
-		ui.Pair("Pairing", "exact name, episode tag, title+year"),
+		ui.Pair("Pairing", t.pairingLabel()),
 		ui.Pair("Backups", backupNote),
 		ui.Pair("Frame cache", t.cacheLabel()),
 		ui.Pair("Ignore entries", fmt.Sprint(t.ignores.Len())))
@@ -84,6 +84,9 @@ func (t *tool) runBatch() error {
 	}
 	if err != nil {
 		return err
+	}
+	if !t.cfg.NoContentPair && len(refs) > 0 && len(dubs) > 0 && pairingHasWeak(plan, t) {
+		plan = t.contentRepair(plan, refs, dubs)
 	}
 	t.printPairing(plan)
 
@@ -517,4 +520,13 @@ func hasDubSuffix(path, suffix string) bool {
 
 func withExt(path, ext string) string {
 	return strings.TrimSuffix(path, filepath.Ext(path)) + ext
+}
+
+// pairingLabel describes the pairing rules used for this run.
+func (t *tool) pairingLabel() string {
+	base := "exact name, episode tag, title+year"
+	if !t.cfg.NoContentPair {
+		base += "; weak episode tags verified by content"
+	}
+	return base
 }

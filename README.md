@@ -183,7 +183,8 @@ run a while for large libraries; everything else is cheap.
 ```
 mediatool align [-interval 0.05] [-match-dist 45] [-bitrate 192k]
                 [-lang-ref eng] [-lang-dub ces] [-n] <reference> <dubbed> [output]
-mediatool align [same flags] [-pair ref=dub] [-pair-only] [-no-backup] <refdir> <dubdir>
+mediatool align [same flags] [-pair ref=dub] [-pair-only] [-no-backup]
+                [-no-content-pair] <refdir> <dubdir>
 mediatool align [same flags] <reference> <dubbed-dir>
 mediatool align [same flags] <reference-dir> <dubbed>
 mediatool align [same flags] -dub-suffix .cz <dir>
@@ -247,6 +248,17 @@ for files the naming magic cannot resolve; multi-episode names
 .cz` splits the walk: `Movie.mkv` is the reference, `Movie.cz.mkv` the
 dub. `-pair-only` prints the pairing plan and stops before any decoding.
 
+When a pair rests only on an episode tag with a different title (or on a
+fuzzy title), batch mode verifies it against the video before decoding
+timing: short frame samples spread over each file are compared, and the
+plan is repaired when another episode matches clearly better. This fixes
+releases whose Czech (or other dub) numbering skips episodes, so
+`S36E12` may really be `S36E11`. The check prints `content verified` or
+`re-paired by content` with the share of matching samples; strong name
+matches and `-pair` entries are never touched. Fingerprints are cached
+like the timing hashes, so a repeated run is instant. Use
+`-no-content-pair` to keep the pure name pairing.
+
 **Timing.** Frames sampled from both files every `-interval` seconds
 (default 0.05, i.e. 20 fps) are perceptually hashed; each dubbed frame
 matches the reference, and a **piecewise timing map** of affine segments
@@ -257,7 +269,9 @@ each segment's fit residual so a suspicious map is visible before
 muxing. A jump reattaches at the first matching frame, segment joins are
 forced monotonic, and a small unmatched stretch is bridged when the
 timing offset is continuous on both sides — only a real missing scene
-stays silent. Reference regions with no dub counterpart stay silent on
+stays silent. A jump that would leave too little reference for the dub
+still to play is rejected, so a repeated shot near the end (credits, a
+reused scene) cannot hijack the walk and silence the remaining minutes. Reference regions with no dub counterpart stay silent on
 the Czech track (the English track is still there); dub-only regions are
 dropped. The run reports match coverage, the segments and every gap above
 20 ms with the total and longest silent span, and refuses maps covering
@@ -272,7 +286,9 @@ perceptual hashes are cached under `$XDG_CACHE_HOME/mediatool/align`
 (default `~/.cache/mediatool/align`, override with `-cache-dir` or
 `MEDIATOOL_CACHE_DIR`). Entries are keyed by path + size + mtime +
 interval, and contain only the 1024-bit hashes — **no video frames are
-written** (~9 MB per hour at the default 0.05 s interval). A `-n` run
+written** (~9 MB per hour at the default 0.05 s interval). The sparse
+content fingerprints used for pairing are stored in the same directory
+and are likewise invalidated when the file changes. A `-n` run
 populates the cache, so the next real run reuses it
 (the phase line says "using cached … frames" instead of decoding). A
 changed file, a different `-interval` or a corrupt entry simply causes a

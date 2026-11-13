@@ -16,6 +16,23 @@
   ffmpeg output instead of buffering every sampled frame, Hamming distance
   uses 64-bit popcounts, and run fitting is incremental, keeping the finer
   sampling cheap in memory and CPU.
+- **`align` content-aware pairing** — a pair that rests only on an episode
+  tag with a different title (or a fuzzy title) is now verified against
+  the video before the expensive timing pass. Short frame samples spread
+  over both files are fingerprinted and cached; when another episode
+  matches clearly better, the plan is repaired and the report says
+  `re-paired by content`. This handles releases whose dub numbering skips
+  episodes (on The Simpsons S36, Czech `S36E12` is English `S36E11`),
+  which previously produced a zero-match timing map. Strong name matches
+  and `-pair` entries are never changed; `-no-content-pair` disables the
+  check.
+- **`align` late duplicate shots** — a resync candidate may no longer
+  leave far less reference than the dub still to play, and resync
+  confirmation now really waits for the requested consecutive frames.
+  A repeated shot near the end of the reference (for example the closing
+  credits) could previously hijack the walk and make the remaining
+  minutes silently unmapped; the same Simpsons couple now covers about
+  90 % instead of 70 %.
 - **`align` frame cache** — the sampling interval is now part of the cache
   key, so a dry run at one resolution no longer evicts the entry used by
   another.

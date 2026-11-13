@@ -4,7 +4,8 @@
 // reference, and a piecewise timing map (affine segments with outlier
 // rejection) drives the resampling of the dub onto the reference timeline.
 // A single pair can be aligned ad hoc, or a whole directory can be paired
-// by episode/title naming and processed in place with .old backups.
+// by episode/title naming (weak episode-tag matches verified by video
+// content) and processed in place with .old backups.
 package align
 
 import (
@@ -36,6 +37,7 @@ type Config struct {
 	DubSuffix      string
 	Pairs          []string
 	PairOnly       bool
+	NoContentPair  bool
 	NoBackup       bool
 	Ignores        []string
 	Interval       float64
@@ -103,6 +105,7 @@ func Run(args []string) error {
 	fs.Var(cli.Ignores{Dst: &cfg.Ignores}, "i", "comma-separated substrings to ignore (also read from the dot ignore files)")
 	fs.Var((*pairFlags)(&cfg.Pairs), "pair", "manual ref=dub pairing, repeatable (batch mode)")
 	fs.BoolVar(&cfg.PairOnly, "pair-only", false, "batch mode: stop after pairing, do not analyse timing")
+	fs.BoolVar(&cfg.NoContentPair, "no-content-pair", false, "batch mode: do not verify episode-tag pairings by video content")
 	fs.BoolVar(&cfg.NoBackup, "no-backup", false, "batch mode: replace the reference and delete the dub without .old backups")
 	fs.BoolVar(&cfg.DryRun, "n", false, "dry run: build the timing map/plan and print it, write nothing")
 	fs.StringVar(&cfg.CacheDir, "cache-dir", "", "frame-hash cache directory (default: $XDG_CACHE_HOME/mediatool/align)")
