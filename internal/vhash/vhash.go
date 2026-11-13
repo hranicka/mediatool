@@ -9,6 +9,7 @@
 package vhash
 
 import (
+	"encoding/binary"
 	"fmt"
 	"math/bits"
 	"math/rand"
@@ -34,8 +35,8 @@ const (
 // Hamming returns the number of differing bits between two signatures.
 func Hamming(a, b [HashLen]byte) int {
 	n := 0
-	for i := range a {
-		n += bits.OnesCount8(a[i] ^ b[i])
+	for i := 0; i < HashLen; i += 8 {
+		n += bits.OnesCount64(binary.LittleEndian.Uint64(a[i:]) ^ binary.LittleEndian.Uint64(b[i:]))
 	}
 	return n
 }
@@ -96,17 +97,47 @@ func median(v []float64) float64 {
 // return an empty signature list.
 func Extract(r run.Runner, ffmpegBin, path string, interval float64) ([][HashLen]byte, error) {
 	vf := fmt.Sprintf("fps=1/%g,scale=%d:%d,format=gray", interval, Side, Side)
-	raw, err := r.Output(ffmpegBin, "-v", "error", "-nostdin", "-i", path,
-		"-vf", vf, "-f", "rawvideo", "pipe:1")
+	args := []string{"-v", "error", "-nostdin", "-i", path,
+		"-vf", vf, "-f", "rawvideo", "pipe:1"}
+	hashes := make([][HashLen]byte, 0, 1024)
+	if s, ok := r.(run.OutputStreamer); ok {
+		h := frameHasher{hashes: &hashes}
+		if err := s.OutputTo(&h, ffmpegBin, args...); err != nil {
+			return nil, fmt.Errorf("cannot extract frames: %w", err)
+		}
+		return hashes, nil
+	}
+	raw, err := r.Output(ffmpegBin, args...)
 	if err != nil {
 		return nil, fmt.Errorf("cannot extract frames: %w", err)
 	}
 	n := len(raw) / FrameLen
-	out := make([][HashLen]byte, 0, n)
 	for i := 0; i < n; i++ {
-		out = append(out, FrameHash(raw[i*FrameLen:(i+1)*FrameLen]))
+		hashes = append(hashes, FrameHash(raw[i*FrameLen:(i+1)*FrameLen]))
 	}
-	return out, nil
+	return hashes, nil
+}
+
+// frameHasher turns a raw frame byte stream (arbitrary Write boundaries)
+// into signatures without buffering the whole extraction.
+type frameHasher struct {
+	pending [FrameLen]byte
+	n       int
+	hashes  *[][HashLen]byte
+}
+
+func (h *frameHasher) Write(p []byte) (int, error) {
+	total := len(p)
+	for len(p) > 0 {
+		n := copy(h.pending[h.n:], p)
+		h.n += n
+		p = p[n:]
+		if h.n == FrameLen {
+			*h.hashes = append(*h.hashes, FrameHash(h.pending[:]))
+			h.n = 0
+		}
+	}
+	return total, nil
 }
 
 // WindowBest returns the position and distance of the best match of

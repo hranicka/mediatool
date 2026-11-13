@@ -2,6 +2,7 @@ package vhash
 
 import (
 	"errors"
+	"io"
 	"math/rand"
 	"strings"
 	"testing"
@@ -113,6 +114,18 @@ func TestMedian(t *testing.T) {
 	}
 }
 
+func TestHamming(t *testing.T) {
+	var a, b [HashLen]byte
+	if got := Hamming(a, b); got != 0 {
+		t.Errorf("identical: got %d", got)
+	}
+	b[0] = 0xff
+	b[HashLen-1] = 0x01
+	if got := Hamming(a, b); got != 9 {
+		t.Errorf("known distance: got %d, want 9", got)
+	}
+}
+
 type fakeFF struct {
 	framesFor func(src string) []byte
 	frameArgs [][]string
@@ -169,6 +182,49 @@ func TestExtract(t *testing.T) {
 		if !found {
 			t.Errorf("args missing %q %q: %v", pair[0], pair[1], args)
 		}
+	}
+}
+
+// streamingFF exercises the OutputStreamer fast path with writes split
+// across frame boundaries.
+type streamingFF struct {
+	fakeFF
+	raw []byte
+}
+
+func (f *streamingFF) OutputTo(w io.Writer, name string, args ...string) error {
+	for i := 0; i < len(args); i++ {
+		if args[i] == "-i" {
+			f.frameArgs = append(f.frameArgs, args)
+		}
+	}
+	for len(f.raw) > 0 {
+		n := min(len(f.raw), 777) // deliberately not a frame multiple
+		if _, err := w.Write(f.raw[:n]); err != nil {
+			return err
+		}
+		f.raw = f.raw[n:]
+	}
+	return nil
+}
+
+func TestExtractStreamsFrames(t *testing.T) {
+	raw := framesAt(4, 7)
+	ff := &streamingFF{raw: raw}
+	hashes, err := Extract(ff, "ffmpeg", "/x/a.mkv", 2)
+	if err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+	if len(hashes) != 7 {
+		t.Fatalf("got %d signatures, want 7", len(hashes))
+	}
+	for i := range hashes {
+		if hashes[i] != FrameHash(raw[i*FrameLen:(i+1)*FrameLen]) {
+			t.Errorf("signature %d does not match its frame", i)
+		}
+	}
+	if len(ff.frameArgs) != 1 {
+		t.Errorf("the streaming path must make one extraction pass, got %d", len(ff.frameArgs))
 	}
 }
 

@@ -181,7 +181,7 @@ run a while for large libraries; everything else is cheap.
 ### align
 
 ```
-mediatool align [-interval 0.2] [-match-dist 45] [-bitrate 192k]
+mediatool align [-interval 0.05] [-match-dist 45] [-bitrate 192k]
                 [-lang-ref eng] [-lang-dub ces] [-n] <reference> <dubbed> [output]
 mediatool align [same flags] [-pair ref=dub] [-pair-only] [-no-backup] <refdir> <dubdir>
 mediatool align [same flags] <reference> <dubbed-dir>
@@ -245,23 +245,33 @@ for files the naming magic cannot resolve; multi-episode names
 .cz` splits the walk: `Movie.mkv` is the reference, `Movie.cz.mkv` the
 dub. `-pair-only` prints the pairing plan and stops before any decoding.
 
-**Timing.** Frames sampled from both files are perceptually hashed; each
-dubbed frame matches the reference, and a **piecewise timing map** of
-affine segments with outlier rejection handles different framerates (PAL
-speedup), shifted starts/ends and skipped or extra scenes. Reference
-regions with no dub counterpart stay silent on the Czech track (the
-English track is still there); dub-only regions are dropped. The run
-reports match coverage, the segments and every gap, and refuses maps
-covering less than half of either file. Highly self-similar content
-(synthetic patterns, long static scenes) gets a caution note. The dub is
-resampled as AAC 192k stereo (`-bitrate` overrides).
+**Timing.** Frames sampled from both files every `-interval` seconds
+(default 0.05, i.e. 20 fps) are perceptually hashed; each dubbed frame
+matches the reference, and a **piecewise timing map** of affine segments
+with outlier rejection handles different framerates (PAL speedup), shifted
+starts/ends and skipped or extra scenes. The 50 ms sampling grid limits
+the map to about ±25 ms — roughly one video frame — and the run prints
+each segment's fit residual so a suspicious map is visible before
+muxing. A jump reattaches at the first matching frame, segment joins are
+forced monotonic, and a small unmatched stretch is bridged when the
+timing offset is continuous on both sides — only a real missing scene
+stays silent. Reference regions with no dub counterpart stay silent on
+the Czech track (the English track is still there); dub-only regions are
+dropped. The run reports match coverage, the segments and every gap above
+20 ms with the total and longest silent span, and refuses maps covering
+less than 80% of either file. Highly self-similar content (synthetic
+patterns, long static scenes) gets a caution note. If the dubbed audio
+stream starts after the first video frame (common in broadcast TS), that
+lead is kept as silence so the authored A/V relationship survives. The
+dub is resampled as AAC 192k stereo (`-bitrate` overrides).
 
 **Frame cache.** The hashing phase decodes each file fully, so the
 perceptual hashes are cached under `$XDG_CACHE_HOME/mediatool/align`
 (default `~/.cache/mediatool/align`, override with `-cache-dir` or
 `MEDIATOOL_CACHE_DIR`). Entries are keyed by path + size + mtime +
 interval, and contain only the 1024-bit hashes — **no video frames are
-written**. A `-n` run populates the cache, so the next real run reuses it
+written** (~9 MB per hour at the default 0.05 s interval). A `-n` run
+populates the cache, so the next real run reuses it
 (the phase line says "using cached … frames" instead of decoding). A
 changed file, a different `-interval` or a corrupt entry simply causes a
 re-hash. `-no-cache` disables reads and writes. `-no-backup` removes the

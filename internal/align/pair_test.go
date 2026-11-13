@@ -82,6 +82,8 @@ func TestPairFilesEpisodeAlone(t *testing.T) {
 	}
 	if len(p.notes) == 0 {
 		t.Error("episode-only pairing must carry a verify notice")
+	} else if !strings.Contains(p.notes[0], "ShowA.S02E05.mkv") || !strings.Contains(p.notes[0], "Completely.Different.02x05.CZ.mkv") {
+		t.Errorf("verify notice must name both files: %q", p.notes[0])
 	}
 
 	// single-digit spellings are the same episode key

@@ -2,12 +2,14 @@ package align
 
 import (
 	"bytes"
+	"math"
 	"math/rand"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/hranicka/mediatool/internal/probe"
 	"github.com/hranicka/mediatool/internal/run"
 	"github.com/hranicka/mediatool/internal/ui"
 	"github.com/hranicka/mediatool/internal/vhash"
@@ -145,8 +147,15 @@ func TestAlignRunAll(t *testing.T) {
 		t.Errorf("missing timing map line: %s", got)
 	}
 	// the +2 s shift must show up at both ends of the map
-	if !strings.Contains(got, "dub 0.0s -> ref 2.0s; dub 18.0s -> ref 20.0s") {
+	if !strings.Contains(got, "dub 0.00s -> ref 2.00s; dub 18.00s -> ref 20.00s") {
 		t.Errorf("missing map endpoints: %s", got)
+	}
+	// the unmatched reference head is a real gap and must be reported
+	if !strings.Contains(got, "gap: ref 0.00s-2.00s (2.00s)") {
+		t.Errorf("missing head gap line: %s", got)
+	}
+	if !strings.Contains(got, "silence: 1 gap(s), 2.00s total, longest 2.00s") {
+		t.Errorf("missing silence summary: %s", got)
 	}
 	if !strings.Contains(got, "Created: "+outPath) {
 		t.Errorf("missing created line: %s", got)
@@ -288,6 +297,50 @@ func TestAlignDubWithoutAudio(t *testing.T) {
 		t.Fatal("expected an error for a dub without audio")
 	} else if !strings.Contains(err.Error(), "no audio track") {
 		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestAudioLead(t *testing.T) {
+	// the dubbed audio starts 0.3 s after the first video frame
+	info := &probe.Info{
+		Format: probe.Format{StartTime: "1.400000"},
+		Streams: []probe.Stream{
+			{CodecType: probe.TypeVideo, StartTime: "1.400000"},
+			{CodecType: probe.TypeAudio, StartTime: "1.700000"},
+		},
+	}
+	if got := audioLead(info, probe.Typed{Stream: info.Streams[1]}); math.Abs(got-0.3) > 1e-9 {
+		t.Errorf("lead: got %v, want 0.3", got)
+	}
+	// audio at the video start (the normal case) needs no correction
+	info.Streams[1].StartTime = "1.400000"
+	if got := audioLead(info, probe.Typed{Stream: info.Streams[1]}); got != 0 {
+		t.Errorf("lead: got %v, want 0", got)
+	}
+	// the container may start earlier than the video (e.g. a subtitle
+	// stream), and cover art must not be mistaken for the video: the lead
+	// is measured from the first real video frame
+	info = &probe.Info{
+		Format: probe.Format{StartTime: "0.000000"},
+		Streams: []probe.Stream{
+			{CodecType: probe.TypeVideo, CodecName: "mjpeg", StartTime: "0.000000", Disposition: probe.Disposition{AttachedPic: 1}},
+			{CodecType: probe.TypeSubtitle, StartTime: "0.000000"},
+			{CodecType: probe.TypeVideo, StartTime: "1.000000"},
+			{CodecType: probe.TypeAudio, StartTime: "1.500000"},
+		},
+	}
+	if got := audioLead(info, probe.Typed{Stream: info.Streams[3]}); math.Abs(got-0.5) > 1e-9 {
+		t.Errorf("lead from video start: got %v, want 0.5", got)
+	}
+	// a missing video start falls back to the container origin
+	info.Streams[2].StartTime = ""
+	if got := audioLead(info, probe.Typed{Stream: info.Streams[3]}); math.Abs(got-1.5) > 1e-9 {
+		t.Errorf("lead with container fallback: got %v, want 1.5", got)
+	}
+	// implausible metadata is ignored
+	info.Streams[3].StartTime = "99"
+	if got := audioLead(info, probe.Typed{Stream: info.Streams[3]}); got != 0 {
+		t.Errorf("implausible lead: got %v, want 0", got)
 	}
 }
 

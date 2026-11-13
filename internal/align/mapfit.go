@@ -19,23 +19,33 @@ const (
 	// minSegmentPoints is the number of reliable matches a continuous run
 	// needs to become a timing segment (shorter runs are match noise).
 	minSegmentPoints = 3
-	// minSegmentDuration drops segments too short to carry useful audio.
-	minSegmentDuration = 1.0
-	// breakOffset is the offset jump (seconds) that splits a run.
-	breakOffset = 1.0
+	// breakOffset is the offset jump (seconds) that splits a run. The match
+	// grid resolves about one frame, so a smaller jump is fit noise.
+	breakOffset = 0.5
 	// maxGap is the largest gap (seconds) between reliable matches that
 	// still counts as continuous; longer gaps are split and re-merged only
-	// when the fitted maps agree at the boundary.
+	// when the offsets on both sides agree.
 	maxGap = 2.0
-	// mergeOffset is how closely two runs' fitted maps must agree at the
-	// boundary to be treated as one continuous segment.
-	mergeOffset = 1.0
+	// mergeOffset is how closely two runs' observed offsets must agree at
+	// the boundary to be treated as one continuous segment.
+	mergeOffset = 0.3
 	// outlierOffset is the residual (seconds) above which a match inside a
 	// run is dropped as an outlier.
 	outlierOffset = 3.0
 	// minCoverage is the fraction of each file the map must cover for the
-	// result to be trusted.
-	minCoverage = 0.5
+	// result to be trusted. Half a file is already a different edit, not a
+	// few skipped scenes.
+	minCoverage = 0.8
+	// bridgeGap is the longest reference gap (seconds) that is bridged
+	// when the fitted offsets on both sides agree: a lost match stretch,
+	// not an edit.
+	bridgeGap = 3.0
+	// bridgeOffset is the offset difference (seconds) allowed across a
+	// bridged gap. A real removed scene shifts the offset by its length.
+	bridgeOffset = 0.3
+	// globalResidual is the largest median residual (seconds) a single
+	// global fit may have to replace a fragmented piecewise map.
+	globalResidual = 0.3
 	// slope bounds for a plausible timing segment. Real edits land at
 	// 1.0 (same speed) and 1.043 (PAL speedup).
 	slopeMin = 0.5
@@ -51,6 +61,7 @@ type segment struct {
 	Slope            float64
 	Intercept        float64
 	Matches          int
+	Residual         float64 // median absolute match residual in seconds
 }
 
 // refAt maps dubbed time to reference time on the segment's line.
@@ -73,6 +84,7 @@ type timingMap struct {
 	MatchedDub  float64
 	RefCoverage float64
 	DubCoverage float64
+	Fallback    bool // fragmented map replaced by one global fit
 }
 
 // timedMatch is one reliable frame match in seconds.
@@ -90,44 +102,96 @@ func (m offsetModel) at(dub float64) float64 {
 	return m.intercept + m.slope*dub
 }
 
-// fitOffset fits the offset line by least squares.
-func fitOffset(points []timedMatch) offsetModel {
-	if len(points) == 0 {
+// offsetAccum carries the least-squares sums of a growing match run, so
+// splitRuns can evaluate the current model in constant time per match.
+type offsetAccum struct {
+	n, sx, sy, sxx, sxy float64
+}
+
+func (a *offsetAccum) add(p timedMatch) {
+	x, y := p.dub, p.ref-p.dub
+	a.n++
+	a.sx += x
+	a.sy += y
+	a.sxx += x * x
+	a.sxy += x * y
+}
+
+func (a offsetAccum) model() offsetModel {
+	if a.n == 0 {
 		return offsetModel{}
 	}
-	if len(points) == 1 {
-		return offsetModel{intercept: points[0].ref - points[0].dub}
-	}
-	var sx, sy, sxx, sxy float64
-	for _, p := range points {
-		x := p.dub
-		y := p.ref - p.dub
-		sx += x
-		sy += y
-		sxx += x * x
-		sxy += x * y
-	}
-	n := float64(len(points))
-	den := sxx - sx*sx/n
+	den := a.sxx - a.sx*a.sx/a.n
 	if math.Abs(den) < 1e-9 {
-		return offsetModel{intercept: sy / n}
+		return offsetModel{intercept: a.sy / a.n}
 	}
-	slope := (sxy - sx*sy/n) / den
-	return offsetModel{slope: slope, intercept: sy/n - slope*sx/n}
+	slope := (a.sxy - a.sx*a.sy/a.n) / den
+	return offsetModel{slope: slope, intercept: a.sy/a.n - slope*a.sx/a.n}
+}
+
+// fitOffset fits the offset line by least squares.
+func fitOffset(points []timedMatch) offsetModel {
+	var a offsetAccum
+	for _, p := range points {
+		a.add(p)
+	}
+	return a.model()
+}
+
+// centerOffset shifts a fitted line so the median residual is zero. Unlike
+// the least-squares mean it is not dragged around by a few bad matches.
+func centerOffset(points []timedMatch, model offsetModel) offsetModel {
+	if len(points) == 0 {
+		return model
+	}
+	res := make([]float64, len(points))
+	for i, p := range points {
+		res[i] = (p.ref - p.dub) - model.at(p.dub)
+	}
+	model.intercept += medianFloat(res)
+	return model
+}
+
+// medianResidual returns the median absolute residual of the matches to
+// the model - a robust estimate of the map's timing precision.
+func medianResidual(points []timedMatch, model offsetModel) float64 {
+	if len(points) == 0 {
+		return 0
+	}
+	res := make([]float64, len(points))
+	for i, p := range points {
+		res[i] = math.Abs((p.ref - p.dub) - model.at(p.dub))
+	}
+	return medianFloat(res)
+}
+
+func medianFloat(v []float64) float64 {
+	s := make([]float64, len(v))
+	copy(s, v)
+	sort.Float64s(s)
+	n := len(s)
+	if n%2 == 1 {
+		return s[n/2]
+	}
+	return (s[n/2-1] + s[n/2]) / 2
 }
 
 // findMatches pairs each dubbed frame with its best-matching reference
-// frame. The walk starts with a local ±window search around the previous
-// match; when the local search loses track (a long intro, a skipped or an
-// extra scene), it periodically searches the whole remaining reference
-// and accepts a jump only after several consecutive frames confirm it.
+// frame. The walk starts with a local forward search around the previous
+// match (only a couple of frames of backward slack: the reference position
+// is monotonic); when the local search loses track (a long intro, a skipped
+// or an extra scene), it periodically searches the whole remaining
+// reference and accepts a jump only after several consecutive frames
+// confirm it.
 func findMatches(ref, dub [][vhash.HashLen]byte, window, matchDist int, interval float64) []frameMatch {
 	matches := make([]frameMatch, 0, len(dub))
 	prev := 0
 	lost := 0
 	resyncEvery := max(1, int(math.Ceil(1.0/interval)))
 	for j := range dub {
-		lo := max(0, prev-window)
+		// the reference position is monotonic: only jitter may step back a
+		// couple of frames, never a repeated scene
+		lo := max(0, prev-2)
 		hi := min(len(ref), prev+window+1)
 		best, dist := vhash.WindowBest(dub, ref, j, lo, hi, prev+1)
 		if dist < matchDist {
@@ -150,30 +214,35 @@ func findMatches(ref, dub [][vhash.HashLen]byte, window, matchDist int, interval
 }
 
 // resyncMatch searches the reference from the previous position onward
-// for the dubbed frame at j and verifies the candidate against the next
-// frames. Requiring a confirmation run keeps repeated intros and static
-// scenes from causing false jumps.
+// for the dubbed frame at j and verifies candidates against the next
+// frames. The scan runs at every sampling position: perceptual hashes are
+// unique per frame, so a strided scan usually misses the true match and
+// reattaches seconds late. The first confirmed candidate wins - the
+// earliest position is the natural continuation, and a repeated later
+// scene must not pull the walk forward. Requiring a confirmation run keeps
+// repeated intros and static scenes from causing false jumps.
 func resyncMatch(ref, dub [][vhash.HashLen]byte, j, prev, matchDist int, interval float64) (int, int, bool) {
 	if prev >= len(ref) || j >= len(dub) {
 		return 0, 0, false
 	}
-	stride := max(1, int(math.Round(0.8/interval)))
-	best, bestDist := coarseBest(ref, dub[j], prev, len(ref), stride, prev)
-	if best < 0 || bestDist >= matchDist {
-		return 0, 0, false
-	}
-	// refine around the coarse hit
-	lo := max(prev, best-stride)
-	hi := min(len(ref), best+stride+1)
-	r, d := vhash.WindowBest(dub, ref, j, lo, hi, best)
-	if d >= matchDist {
-		return 0, 0, false
-	}
-
 	confirm := max(3, int(math.Ceil(1.0/interval)))
+	for k := prev; k < len(ref); k++ {
+		d := vhash.Hamming(dub[j], ref[k])
+		if d >= matchDist {
+			continue
+		}
+		if confirmMatch(ref, dub, j, k, matchDist, confirm) {
+			return k, d, true
+		}
+	}
+	return 0, 0, false
+}
+
+// confirmMatch reports whether ref[r:] continues to match dub[j:] for up
+// to confirm frames, allowing one frame of slack for framerate drift.
+func confirmMatch(ref, dub [][vhash.HashLen]byte, j, r, matchDist, confirm int) bool {
 	ok := 0
 	for k := 0; k < confirm && j+k < len(dub) && r+k < len(ref); k++ {
-		// one frame of slack absorbs framerate drift inside the window
 		bestD := vhash.Hamming(dub[j+k], ref[r+k])
 		if r+k > 0 {
 			bestD = min(bestD, vhash.Hamming(dub[j+k], ref[r+k-1]))
@@ -186,39 +255,7 @@ func resyncMatch(ref, dub [][vhash.HashLen]byte, j, prev, matchDist int, interva
 		}
 		ok++
 	}
-	if ok < min(3, len(dub)-j) {
-		return 0, 0, false
-	}
-	return r, d, true
-}
-
-// coarseBest scans b[lo:hi) with a stride and refines the best hit.
-func coarseBest(b [][vhash.HashLen]byte, h [vhash.HashLen]byte, lo, hi, stride, want int) (int, int) {
-	best, bestDist := -1, vhash.Side*vhash.Side+1
-	for k := lo; k < hi; k += stride {
-		if d := vhash.Hamming(h, b[k]); d < bestDist ||
-			(d == bestDist && (best < 0 || absInt(k-want) < absInt(best-want))) {
-			best, bestDist = k, d
-		}
-	}
-	if best < 0 {
-		return -1, bestDist
-	}
-	rlo, rhi := max(lo, best-stride), min(hi, best+stride+1)
-	for k := rlo; k < rhi; k++ {
-		if d := vhash.Hamming(h, b[k]); d < bestDist ||
-			(d == bestDist && absInt(k-want) < absInt(best-want)) {
-			best, bestDist = k, d
-		}
-	}
-	return best, bestDist
-}
-
-func absInt(v int) int {
-	if v < 0 {
-		return -v
-	}
-	return v
+	return ok >= min(3, len(dub)-j)
 }
 
 // buildTimingMap turns reliable frame matches into a piecewise (segmented)
@@ -247,13 +284,9 @@ func buildTimingMap(matches []frameMatch, interval, refDur, dubDur float64, matc
 	var pruned [][]timedMatch
 	for _, run := range runs {
 		points, _ := pruneRun(run)
-		if len(points) < minSegmentPoints {
-			continue
+		if len(points) >= minSegmentPoints {
+			pruned = append(pruned, points)
 		}
-		if points[len(points)-1].dub-points[0].dub < minSegmentDuration {
-			continue
-		}
-		pruned = append(pruned, points)
 	}
 	pruned = mergeRuns(pruned)
 
@@ -270,12 +303,20 @@ func buildTimingMap(matches []frameMatch, interval, refDur, dubDur float64, matc
 		segs = append(segs, s)
 	}
 	segs = nonOverlapping(segs)
+	segs = bridgeGaps(segs, refDur, dubDur)
+	segs = normalizeJoins(segs, dubDur)
+	fallback := false
+	if gs, ok := globalFallback(rel, segs, interval, refDur, dubDur); ok {
+		segs = []segment{gs}
+		fallback = true
+	}
+
 	kept := 0
 	for _, s := range segs {
 		kept += s.Matches
 	}
 
-	tm := &timingMap{Segments: segs, NRel: nRel, NOut: nRel - kept}
+	tm := &timingMap{Segments: segs, NRel: nRel, NOut: nRel - kept, Fallback: fallback}
 	for _, s := range segs {
 		tm.MatchedRef += s.RefEnd - s.RefStart
 		tm.MatchedDub += s.DubEnd - s.DubStart
@@ -294,16 +335,20 @@ func buildTimingMap(matches []frameMatch, interval, refDur, dubDur float64, matc
 
 // splitRuns groups reliable matches into offset-continuous runs.
 func splitRuns(rel []timedMatch) [][]timedMatch {
-	var runs [][]timedMatch
-	var cur []timedMatch
+	var (
+		runs [][]timedMatch
+		cur  []timedMatch
+		acc  offsetAccum
+	)
 	for _, m := range rel {
 		if len(cur) == 0 {
 			cur = append(cur, m)
+			acc.add(m)
 			continue
 		}
 		prev := cur[len(cur)-1]
 		gap := m.dub - prev.dub
-		model := fitOffset(cur)
+		model := acc.model()
 		resid := (m.ref - m.dub) - model.at(m.dub)
 		boundary := false
 		if len(cur) >= 2 {
@@ -314,9 +359,12 @@ func splitRuns(rel []timedMatch) [][]timedMatch {
 		if boundary {
 			runs = append(runs, cur)
 			cur = []timedMatch{m}
+			acc = offsetAccum{}
+			acc.add(m)
 			continue
 		}
 		cur = append(cur, m)
+		acc.add(m)
 	}
 	if len(cur) > 0 {
 		runs = append(runs, cur)
@@ -343,9 +391,11 @@ func pruneRun(points []timedMatch) ([]timedMatch, int) {
 	return points, original - len(points)
 }
 
-// mergeRuns joins adjacent runs whose fitted maps agree at the boundary;
-// this restores continuity across unreliable stretches and reconnects the
-// runs around a single outlier.
+// mergeRuns joins adjacent runs whose observed offset agrees at the
+// boundary; this restores continuity across unreliable stretches and
+// reconnects the runs around a single outlier. The offsets are taken from
+// the matches near each edge, not from extrapolated independent slopes,
+// which are noisy and can drift apart over a gap.
 func mergeRuns(runs [][]timedMatch) [][]timedMatch {
 	for changed := true; changed; {
 		changed = false
@@ -354,9 +404,7 @@ func mergeRuns(runs [][]timedMatch) [][]timedMatch {
 			if len(a) == 0 || len(b) == 0 {
 				continue
 			}
-			ma, mb := fitOffset(a), fitOffset(b)
-			boundary := b[0].dub
-			if math.Abs(ma.at(boundary)-mb.at(boundary)) <= mergeOffset {
+			if math.Abs(edgeOffset(a, true)-edgeOffset(b, false)) <= mergeOffset {
 				runs[i] = append(a, b...)
 				runs = append(runs[:i+1], runs[i+2:]...)
 				changed = true
@@ -367,9 +415,27 @@ func mergeRuns(runs [][]timedMatch) [][]timedMatch {
 	return runs
 }
 
+// edgeOffset is the median ref-dub offset of the first or last few matches
+// of a run - a stable local level even when the fitted slope is noisy.
+func edgeOffset(points []timedMatch, tail bool) float64 {
+	n := min(5, len(points))
+	if n == 0 {
+		return 0
+	}
+	vals := make([]float64, n)
+	for i := 0; i < n; i++ {
+		j := i
+		if tail {
+			j = len(points) - n + i
+		}
+		vals[i] = points[j].ref - points[j].dub
+	}
+	return medianFloat(vals)
+}
+
 // runSegment fits and bounds one continuous run.
 func runSegment(points []timedMatch, interval, refDur, dubDur float64) (segment, bool) {
-	model := fitOffset(points)
+	model := centerOffset(points, fitOffset(points))
 	slope := 1 + model.slope
 	if !isFinite(model.intercept) || !isFinite(slope) || slope < slopeMin || slope > slopeMax {
 		return segment{}, false
@@ -391,7 +457,7 @@ func runSegment(points []timedMatch, interval, refDur, dubDur float64) (segment,
 	refEnd := model.intercept + slope*dubEnd
 	refStart = min(max(refStart, 0), refDur)
 	refEnd = min(max(refEnd, 0), refDur)
-	if refEnd-refStart < minSegmentDuration {
+	if refEnd-refStart <= 0 {
 		return segment{}, false
 	}
 	return segment{
@@ -402,12 +468,12 @@ func runSegment(points []timedMatch, interval, refDur, dubDur float64) (segment,
 		Slope:     slope,
 		Intercept: model.intercept,
 		Matches:   len(points),
+		Residual:  medianResidual(points, model),
 	}, true
 }
 
-// nonOverlapping sorts segments by dubbed time and drops or trims the ones
-// whose reference span collides with the previous segment (a sign of
-// conflicting matches).
+// nonOverlapping sorts segments by dubbed time, trims boundary overlaps
+// with the previous segment and drops a segment that mostly conflicts.
 func nonOverlapping(segs []segment) []segment {
 	sort.Slice(segs, func(i, j int) bool {
 		if segs[i].DubStart != segs[j].DubStart {
@@ -420,25 +486,134 @@ func nonOverlapping(segs []segment) []segment {
 		if len(out) > 0 {
 			prev := out[len(out)-1]
 			if s.DubStart < prev.DubEnd {
-				if prev.DubEnd-s.DubStart > 0.5 {
+				if prev.DubEnd-s.DubStart > clashLimit(s.DubEnd-s.DubStart) {
 					continue
 				}
 				s.DubStart = prev.DubEnd
 			}
 			if s.RefStart < prev.RefEnd {
-				if prev.RefEnd-s.RefStart > 0.5 {
+				if prev.RefEnd-s.RefStart > clashLimit(s.RefEnd-s.RefStart) {
 					continue
 				}
 				s.RefStart = prev.RefEnd
 				s.DubStart = max(s.DubStart, s.dubAt(s.RefStart))
 			}
-			if s.RefEnd-s.RefStart < minSegmentDuration || s.DubEnd <= s.DubStart {
+			if s.RefEnd-s.RefStart <= 0 || s.DubEnd <= s.DubStart {
 				continue
 			}
 		}
 		out = append(out, s)
 	}
 	return out
+}
+
+// clashLimit is how much of a segment may overlap the previous one and
+// still be treated as boundary noise. A conflict that eats more than a
+// quarter of the segment is a different map, not a rounding artifact.
+func clashLimit(span float64) float64 {
+	return max(0.5, 0.25*span)
+}
+
+// bridgeGaps covers small reference gaps whose offset is continuous on both
+// sides: those are lost matches (fades, noise, a static shot), not edits, so
+// extending the preceding line keeps the dub audible. A real removed scene
+// shifts the offset by its length and stays silent.
+func bridgeGaps(segs []segment, refDur, dubDur float64) []segment {
+	if len(segs) == 0 {
+		return segs
+	}
+	if first := &segs[0]; first.RefStart > 0 && first.RefStart <= bridgeGap {
+		if d := first.dubAt(0); d >= 0 && d < first.DubStart {
+			first.RefStart = 0
+			first.DubStart = d
+		}
+	}
+	for i := 1; i < len(segs); i++ {
+		a, b := &segs[i-1], &segs[i]
+		gap := b.RefStart - a.RefEnd
+		if gap <= 0 || gap > bridgeGap {
+			continue
+		}
+		if math.Abs((b.RefStart-b.DubStart)-(a.RefEnd-a.DubEnd)) > bridgeOffset {
+			continue
+		}
+		d := a.dubAt(b.RefStart)
+		if d <= a.DubEnd || d > dubDur {
+			continue
+		}
+		a.RefEnd = b.RefStart
+		a.DubEnd = d
+	}
+	if last := &segs[len(segs)-1]; last.RefEnd < refDur && refDur-last.RefEnd <= bridgeGap {
+		if d := last.dubAt(refDur); d > last.DubEnd && d <= dubDur {
+			last.RefEnd = refDur
+			last.DubEnd = d
+		}
+	}
+	return segs
+}
+
+// normalizeJoins makes the map monotonic: a segment's first mapped dub
+// position may not fall behind the previous segment's last read position.
+// Such a rewind is fit noise (a real edit advances the dub), and the
+// forward-only resampler would write silence until it caught up. Shifting
+// the intercept keeps the covered reference span intact, unlike trimming
+// the start, which would leave that span silent.
+func normalizeJoins(segs []segment, dubDur float64) []segment {
+	out := segs[:0]
+	for _, s := range segs {
+		if len(out) > 0 {
+			prev := &out[len(out)-1]
+			mapped := s.dubAt(s.RefStart)
+			if mapped < prev.DubEnd {
+				s.Intercept = s.RefStart - s.Slope*prev.DubEnd
+				mapped = prev.DubEnd
+			}
+			s.DubStart = mapped
+			s.DubEnd = s.dubAt(s.RefEnd)
+			if s.DubEnd > dubDur {
+				s.DubEnd = dubDur
+				s.RefEnd = s.refAt(dubDur)
+			}
+			if s.RefEnd <= s.RefStart || s.DubEnd <= s.DubStart {
+				continue
+			}
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+// globalFallback fits one line through all reliable matches when the
+// piecewise map is fragmented or incomplete. It only replaces the map when
+// the global line explains the whole reference almost to both ends and is
+// precise: genuine edits shift the offset and fail both tests.
+func globalFallback(rel []timedMatch, segs []segment, interval, refDur, dubDur float64) (segment, bool) {
+	if len(segs) <= 2 || refDur <= 0 {
+		return segment{}, false
+	}
+	covered := 0.0
+	for _, s := range segs {
+		covered += s.RefEnd - s.RefStart
+	}
+	if len(segs) <= 8 && covered >= 0.9*refDur {
+		return segment{}, false
+	}
+	points, _ := pruneRun(rel)
+	if len(points) < minSegmentPoints {
+		return segment{}, false
+	}
+	s, ok := runSegment(points, interval, refDur, dubDur)
+	if !ok || s.Residual > globalResidual {
+		return segment{}, false
+	}
+	if s.RefStart > 1 || s.RefEnd < refDur-1 {
+		return segment{}, false
+	}
+	if s.RefEnd-s.RefStart < covered-0.5 {
+		return segment{}, false
+	}
+	return s, true
 }
 
 // checkCoverage refuses maps that only explain a small part of either

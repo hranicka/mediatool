@@ -39,7 +39,7 @@ func TestResampleDubConstantOffset(t *testing.T) {
 	// 6 s long (2 s dub-free head + 4 s dub)
 	tm := oneSegment(4, 2, 6, 1, 2)
 	var out bytes.Buffer
-	if err := resampleDub(bytes.NewReader(raw), &out, tm, 6.0); err != nil {
+	if err := resampleDub(bytes.NewReader(raw), &out, tm, 6.0, 0); err != nil {
 		t.Fatalf("resampleDub: %v", err)
 	}
 	res := out.Bytes()
@@ -66,7 +66,7 @@ func TestResampleDubSilentPastDubEnd(t *testing.T) {
 
 	tm := oneSegment(2, 0, 2, 1, 0)
 	var out bytes.Buffer
-	if err := resampleDub(bytes.NewReader(raw), &out, tm, 8.0); err != nil {
+	if err := resampleDub(bytes.NewReader(raw), &out, tm, 8.0, 0); err != nil {
 		t.Fatalf("resampleDub: %v", err)
 	}
 	res := out.Bytes()
@@ -91,7 +91,7 @@ func TestResampleDubGapsStaySilent(t *testing.T) {
 		{DubStart: 2, DubEnd: 3, RefStart: 2, RefEnd: 3, Slope: 1},
 	}}
 	var out bytes.Buffer
-	if err := resampleDub(bytes.NewReader(raw), &out, tm, 3.0); err != nil {
+	if err := resampleDub(bytes.NewReader(raw), &out, tm, 3.0, 0); err != nil {
 		t.Fatalf("resampleDub: %v", err)
 	}
 	res := out.Bytes()
@@ -108,6 +108,77 @@ func TestResampleDubGapsStaySilent(t *testing.T) {
 	}
 }
 
+func TestResampleDubFadesAtReferenceHead(t *testing.T) {
+	const sr = sampleRate
+	raw := make([]byte, sr/2*4)
+	for i := 0; i < sr/2; i++ {
+		binary.LittleEndian.PutUint16(raw[i*4:], 10000)
+		binary.LittleEndian.PutUint16(raw[i*4+2:], 10000)
+	}
+	tm := oneSegment(0.5, 0.5, 1, 1, 0.5)
+	var out bytes.Buffer
+	if err := resampleDub(bytes.NewReader(raw), &out, tm, 1.0, 0); err != nil {
+		t.Fatalf("resampleDub: %v", err)
+	}
+	res := out.Bytes()
+	fadeFrames := int(fadeSeconds * sr)
+	if got := sampleL(res, sr/2); got != 0 {
+		t.Errorf("segment head must start at silence, got %d", got)
+	}
+	if got := sampleL(res, sr/2+fadeFrames/2); got <= 0 || got >= 10000 {
+		t.Errorf("mid-fade must be attenuated, got %d", got)
+	}
+	if got := sampleL(res, sr/2+2*fadeFrames); got != 10000 {
+		t.Errorf("after the fade the gain must be full, got %d", got)
+	}
+}
+
+func TestResampleDubNoDipAtSegmentJoin(t *testing.T) {
+	const sr = sampleRate
+	raw := make([]byte, sr*4)
+	for i := 0; i < sr; i++ {
+		binary.LittleEndian.PutUint16(raw[i*4:], 10000)
+		binary.LittleEndian.PutUint16(raw[i*4+2:], 10000)
+	}
+	// two segments butted at 0.5 s: continuous content, no gap in between
+	tm := &timingMap{Segments: []segment{
+		{DubStart: 0, DubEnd: 0.5, RefStart: 0, RefEnd: 0.5, Slope: 1},
+		{DubStart: 0.5, DubEnd: 1, RefStart: 0.5, RefEnd: 1, Slope: 1},
+	}}
+	var out bytes.Buffer
+	if err := resampleDub(bytes.NewReader(raw), &out, tm, 1.0, 0); err != nil {
+		t.Fatalf("resampleDub: %v", err)
+	}
+	res := out.Bytes()
+	for _, frame := range []int{sr/2 - 1, sr / 2, sr/2 + 1, sr - 2000} {
+		if got := sampleL(res, frame); got != 10000 {
+			t.Errorf("frame %d at the butted join: got %d, want 10000 (no fade)", frame, got)
+		}
+	}
+}
+
+func TestResampleDubRewindAtJoinNoSilence(t *testing.T) {
+	const sr = sampleRate
+	raw := dubRaw(3 * sr)
+	// the second fitted line reads 0.1 s behind the first segment's end:
+	// a fit artifact, not an edit. The reader must serve the recent frame
+	// instead of writing silence until it catches up.
+	tm := &timingMap{Segments: []segment{
+		{DubStart: 0, DubEnd: 1, RefStart: 0, RefEnd: 1, Slope: 1},
+		{DubStart: 0.9, DubEnd: 2, RefStart: 1, RefEnd: 2, Slope: 1, Intercept: 0.1},
+	}}
+	var out bytes.Buffer
+	if err := resampleDub(bytes.NewReader(raw), &out, tm, 2.0, 0); err != nil {
+		t.Fatalf("resampleDub: %v", err)
+	}
+	res := out.Bytes()
+	for frame := 0; frame < 2*sr; frame++ {
+		if got := sampleL(res, frame); got == 0 {
+			t.Fatalf("frame %d at the rewinding join is silent", frame)
+		}
+	}
+}
+
 func TestResampleDubStretchedMap(t *testing.T) {
 	// ref = 2*dub: the dub plays at half speed, so consecutive output
 	// samples interpolate around the same dub index. The two-frame cache
@@ -119,7 +190,7 @@ func TestResampleDubStretchedMap(t *testing.T) {
 	}
 	tm := oneSegment(0.02, 0, 0.04, 2, 0)
 	var out bytes.Buffer
-	if err := resampleDub(bytes.NewReader(raw), &out, tm, 0.04); err != nil {
+	if err := resampleDub(bytes.NewReader(raw), &out, tm, 0.04, 0); err != nil {
 		t.Fatalf("resampleDub: %v", err)
 	}
 	res := out.Bytes()
@@ -131,6 +202,44 @@ func TestResampleDubStretchedMap(t *testing.T) {
 		if got := int(sampleL(res, frame)); got != want {
 			t.Errorf("frame %d: got %d, want %d (interpolated)", frame, got, want)
 		}
+	}
+}
+
+func TestResampleDubAudioLead(t *testing.T) {
+	const sr = sampleRate
+	raw := dubRaw(2 * sr)
+
+	// the raw extraction dropped 0.5 s of leading silence: output 0.5 s
+	// must address the first extracted frame, not the middle of the track
+	tm := oneSegment(2, 0, 2, 1, 0)
+	var out bytes.Buffer
+	if err := resampleDub(bytes.NewReader(raw), &out, tm, 2.0, 0.5); err != nil {
+		t.Fatalf("resampleDub: %v", err)
+	}
+	res := out.Bytes()
+	if len(res) != 2*sr*4 {
+		t.Fatalf("output size: got %d, want %d", len(res), 2*sr*4)
+	}
+	for _, frame := range []int{0, sr/2 - 2, sr/2 - 1} {
+		if got := sampleL(res, frame); got != 0 {
+			t.Errorf("frame %d before the lead must be silent, got %d", frame, got)
+		}
+	}
+	if got, want := sampleL(res, sr/2), int16(1000); got != want {
+		t.Errorf("first sample after the lead: got %d, want %d", got, want)
+	}
+	if got, want := sampleL(res, sr/2+1234), int16(1000+1234%1000); got != want {
+		t.Errorf("inside the lead-adjusted track: got %d, want %d", got, want)
+	}
+}
+
+func TestDubFramesNegativeIndex(t *testing.T) {
+	d := &dubFrames{br: bufio.NewReader(bytes.NewReader(dubRaw(10)))}
+	if _, ok := d.frame(-1); ok {
+		t.Fatal("a negative index must not return the first frame")
+	}
+	if f, ok := d.frame(0); !ok || f[0] != 1000 {
+		t.Fatalf("frame 0 after the negative probe: got %v %v", f, ok)
 	}
 }
 
@@ -156,7 +265,7 @@ func TestResampleDubTrailingPartialFrame(t *testing.T) {
 	raw := full[:len(full)-2] // half a frame
 	tm := oneSegment(1, 0, 1, 1, 0)
 	var out bytes.Buffer
-	if err := resampleDub(bytes.NewReader(raw), &out, tm, 1.0); err != nil {
+	if err := resampleDub(bytes.NewReader(raw), &out, tm, 1.0, 0); err != nil {
 		t.Fatalf("resampleDub: %v", err)
 	}
 	res := out.Bytes()
@@ -173,6 +282,40 @@ func TestResampleDubTrailingPartialFrame(t *testing.T) {
 	}
 }
 
+func TestResampleDubSilenceMatchesMapGaps(t *testing.T) {
+	const sr = sampleRate
+	raw := dubRaw(10 * sr)
+	// reference 0-12 s: 5 s of audio, a 2 s removed scene, then 5 s of
+	// audio mapped from dub 5-10 s. Only the removed scene is silent.
+	tm := &timingMap{Segments: []segment{
+		{DubStart: 0, DubEnd: 5, RefStart: 0, RefEnd: 5, Slope: 1},
+		{DubStart: 5, DubEnd: 10, RefStart: 7, RefEnd: 12, Slope: 1, Intercept: 2},
+	}}
+	var out bytes.Buffer
+	if err := resampleDub(bytes.NewReader(raw), &out, tm, 12.0, 0); err != nil {
+		t.Fatalf("resampleDub: %v", err)
+	}
+	res := out.Bytes()
+	if len(res) != 12*sr*4 {
+		t.Fatalf("output size: got %d, want %d", len(res), 12*sr*4)
+	}
+	silent := 0
+	for frame := 0; frame < 12*sr; frame++ {
+		if sampleL(res, frame) == 0 {
+			silent++
+		}
+	}
+	if silent < 2*sr || silent > 2*sr+2 {
+		t.Errorf("silent samples: got %d (%.3f s), want ~%d (2 s)", silent, float64(silent)/sr, 2*sr)
+	}
+	for _, frame := range []int{5*sr - 1, 5 * sr, 7*sr - 1, 7*sr + int(fadeSeconds*sr), 12*sr - 1} {
+		silentHere := sampleL(res, frame) == 0
+		if want := frame >= 5*sr && frame < 7*sr; silentHere != want {
+			t.Errorf("frame %d: silent=%v, want %v", frame, silentHere, want)
+		}
+	}
+}
+
 func TestResampleDubInterpolates(t *testing.T) {
 	// a rising ramp: sample i holds value 2*i; a half-sample offset
 	// must interpolate to the odd value between neighbors
@@ -184,7 +327,7 @@ func TestResampleDubInterpolates(t *testing.T) {
 	}
 	tm := oneSegment(1, 0, 1, 1, -0.5/float64(sampleRate))
 	var out bytes.Buffer
-	if err := resampleDub(bytes.NewReader(raw), &out, tm, 1.0); err != nil {
+	if err := resampleDub(bytes.NewReader(raw), &out, tm, 1.0, 0); err != nil {
 		t.Fatalf("resampleDub: %v", err)
 	}
 	res := out.Bytes()

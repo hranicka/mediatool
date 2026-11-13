@@ -90,6 +90,29 @@ func TestFormatHelpers(t *testing.T) {
 	}
 }
 
+func TestStartTimeHelpers(t *testing.T) {
+	info := &Info{
+		Format: Format{StartTime: "1.400000"},
+		Streams: []Stream{
+			{CodecType: TypeVideo, StartTime: "1.420000"},
+			{CodecType: TypeAudio, StartTime: "1.700000"},
+			{CodecType: TypeSubtitle},
+		},
+	}
+	if v, ok := info.Format.StartSeconds(); !ok || v != 1.4 {
+		t.Errorf("format start: got %v %v", v, ok)
+	}
+	if v, ok := info.Streams[1].StartSeconds(); !ok || v != 1.7 {
+		t.Errorf("stream start: got %v %v", v, ok)
+	}
+	if _, ok := info.Streams[2].StartSeconds(); ok {
+		t.Error("missing start_time must not parse")
+	}
+	if _, ok := (&Format{StartTime: "N/A"}).StartSeconds(); ok {
+		t.Error("N/A must not parse")
+	}
+}
+
 func TestSideDataDetection(t *testing.T) {
 	info, _ := Probe(&fakeRunner{out: []byte(sampleJSON)}, "ffprobe", "movie.mkv")
 

@@ -2,6 +2,20 @@
 
 ## 2.2.0
 
+- **`align` lipsync precision** — the default frame sampling interval drops
+  from 0.2 s to 0.05 s (20 fps), which limits the timing map to about
+  ±25 ms instead of ±100 ms. Each segment line now reports its fitted
+  residual, and the map prints the sampling grid and worst residual so a
+  weak map is visible before muxing. A lost scene reattaches at the first
+  matching frame (no stride grid), segment joins are forced monotonic and
+  small match losses with a continuous offset are bridged, so only real
+  missing scenes stay silent. The report lists every gap above 20 ms with
+  the total and longest silent span. A dubbed audio stream that starts
+  after its first video frame (common in broadcast TS) keeps that lead as
+  silence instead of shifting the whole track. Frame hashing now streams
+  ffmpeg output instead of buffering every sampled frame, Hamming distance
+  uses 64-bit popcounts, and run fitting is incremental, keeping the finer
+  sampling cheap in memory and CPU.
 - **`align` batch mode** — pairs a whole directory of references with
   dubbed versions and aligns each couple in place: the reference is
   replaced by the aligned file, the original reference and the dub are

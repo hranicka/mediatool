@@ -180,7 +180,8 @@ func pairFiles(refs, dubs []string, manual []string, dubSuffix string) (pairing,
 		case ok:
 			how := chosen.how
 			if strings.HasPrefix(how, "episode ") && chosen.score < 0.95 {
-				p.notes = append(p.notes, fmt.Sprintf("%s: matched by episode tag only - verify the pairing", filepath.Base(ref)))
+				p.notes = append(p.notes, fmt.Sprintf("%s <-> %s: matched by episode tag only - verify the pairing",
+					filepath.Base(ref), filepath.Base(chosen.path)))
 			}
 			if chosen.score < 0.98 && how != "manual" {
 				how = fmt.Sprintf("%s, score %.2f", how, chosen.score)
@@ -299,12 +300,13 @@ func pairOne(single string, candidates []string, refIsSingle bool) pairing {
 		return p
 	}
 	how := chosen.how
-	noteName := single
-	if !refIsSingle {
-		noteName = chosen.path
+	refPath, dubPath := chosen.path, single
+	if refIsSingle {
+		refPath, dubPath = single, chosen.path
 	}
 	if strings.HasPrefix(how, "episode ") && chosen.score < 0.95 {
-		p.notes = append(p.notes, fmt.Sprintf("%s: matched by episode tag only - verify the pairing", filepath.Base(noteName)))
+		p.notes = append(p.notes, fmt.Sprintf("%s <-> %s: matched by episode tag only - verify the pairing",
+			filepath.Base(refPath), filepath.Base(dubPath)))
 	}
 	if chosen.score < 0.98 && how != "manual" {
 		how = fmt.Sprintf("%s, score %.2f", how, chosen.score)

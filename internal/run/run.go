@@ -25,6 +25,13 @@ type Runner interface {
 	Stream(name string, args ...string) ([]byte, error)
 }
 
+// OutputStreamer is an optional Runner capability: run a command and
+// stream its stdout to w instead of buffering it. Callers use it for large
+// binary outputs (e.g. sampled video frames) to keep memory flat.
+type OutputStreamer interface {
+	OutputTo(w io.Writer, name string, args ...string) error
+}
+
 // Cmd is the real Runner backed by os/exec.
 type Cmd struct{}
 
@@ -48,6 +55,18 @@ func (Cmd) Stream(name string, args ...string) ([]byte, error) {
 		return nil, fmt.Errorf("%w: %s", err, errBuf.String())
 	}
 	return errBuf.Bytes(), nil
+}
+
+// OutputTo runs the command and streams stdout to w.
+func (Cmd) OutputTo(w io.Writer, name string, args ...string) error {
+	var errBuf bytes.Buffer
+	cmd := exec.Command(name, args...)
+	cmd.Stdout = w
+	cmd.Stderr = &errBuf
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("%w: %s", err, errBuf.String())
+	}
+	return nil
 }
 
 // Locate returns the ffmpeg and ffprobe binary paths: FFMPEG_BIN overrides

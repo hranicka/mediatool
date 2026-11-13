@@ -72,6 +72,7 @@ type inputs struct {
 	refDur, dubDur   float64
 	dubAudio         probe.Typed
 	dubLangMatched   bool
+	dubAudioLead     float64 // seconds between the dub's first video frame and its first audio sample
 	refSize          int64
 }
 
@@ -92,7 +93,7 @@ func Run(args []string) error {
 	}
 	var cfg Config
 	var verbose bool
-	fs.Float64Var(&cfg.Interval, "interval", 0.2, "frame sampling interval in seconds (smaller = finer map, slower)")
+	fs.Float64Var(&cfg.Interval, "interval", 0.05, "frame sampling interval in seconds (smaller = finer map, slower; 0.05 resolves lipsync to about one video frame)")
 	fs.IntVar(&cfg.MatchDist, "match-dist", 45, "max hash distance (of 1024 bits) for a reliable frame match")
 	fs.StringVar(&cfg.Bitrate, "bitrate", "192k", "bitrate of the resampled dub track (AAC)")
 	fs.StringVar(&cfg.LangRef, "lang-ref", "eng", "expected language tag of the reference audio (sanity check; all reference tracks are copied)")
@@ -409,9 +410,13 @@ func (t *tool) probeInputs(ref, dub string) (*inputs, error) {
 		dubDur:         dubDur,
 		dubAudio:       dubAudio,
 		dubLangMatched: matched,
+		dubAudioLead:   audioLead(dubInfo, dubAudio),
 	}
 	if st, statErr := os.Stat(ref); statErr == nil {
 		in.refSize = st.Size()
+	}
+	if in.dubAudioLead >= 0.05 {
+		t.rep.Note(fmt.Sprintf("note: the dubbed audio starts %.2fs after its first video frame - keeping that lead as silence", in.dubAudioLead))
 	}
 	if nAttach := len(refInfo.ByType()["attachment"]); nAttach > 0 {
 		t.rep.Note(fmt.Sprintf("note: the reference carries %d attachment stream(s) (e.g. fonts), copied when the output is MKV", nAttach))
@@ -445,6 +450,38 @@ func selectDubAudio(info *probe.Info, lang string) (probe.Typed, bool) {
 		}
 	}
 	return best, true
+}
+
+// audioLead returns the gap between the dub's first video frame and its
+// first audio sample. Frame sampling starts at the first video frame and
+// raw audio extraction drops leading silence, so the resampler must
+// subtract this lead from dubbed video time. The container origin is only
+// a fallback: it can be earlier than the video (e.g. a subtitle stream).
+func audioLead(info *probe.Info, audio probe.Typed) float64 {
+	origin := 0.0
+	if v, ok := info.Format.StartSeconds(); ok {
+		origin = v
+	}
+	if videos := info.ByType()[probe.TypeVideo]; len(videos) > 0 {
+		for _, v := range videos {
+			if media.IsCoverArt(v.Stream) {
+				continue
+			}
+			if t, ok := v.Stream.StartSeconds(); ok {
+				origin = t
+			}
+			break
+		}
+	}
+	first, ok := audio.Stream.StartSeconds()
+	if !ok {
+		return 0
+	}
+	lead := first - origin
+	if lead <= 0.001 || lead > 10 {
+		return 0
+	}
+	return lead
 }
 
 // anyLang reports whether any audio track carries the requested language.
@@ -500,7 +537,9 @@ func (t *tool) buildMap(in *inputs) (*timingMap, error) {
 		t.rep.Note(fmt.Sprintf("note: frames are highly self-similar (background median %d of %d bits) - scene matches carry little evidence, verify the timing map carefully", bg, vhash.Side*vhash.Side))
 	}
 
-	window := max(50, int(5.0/t.cfg.Interval))
+	// ±10 s local walk: wider than any plausible start offset, narrow
+	// enough that a hash match is unambiguous. Bigger jumps go through resync.
+	window := max(50, int(math.Round(10.0/t.cfg.Interval)))
 	matches := findMatches(refHashes, dubHashes, window, t.cfg.MatchDist, t.cfg.Interval)
 	tm, err := buildTimingMap(matches, t.cfg.Interval, in.refDur, in.dubDur, t.cfg.MatchDist)
 	if err != nil {
@@ -587,27 +626,48 @@ func (t *tool) printMap(tm *timingMap, in *inputs) {
 	t.rep.Raw(ui.GoodTone, "Timing map: %d reliable matches, %d outliers dropped\n", tm.NRel, tm.NOut)
 	t.rep.Raw(ui.Neutral, "  covers %.1f%% of the reference and %.1f%% of the dub; %d segment(s)\n",
 		tm.RefCoverage*100, tm.DubCoverage*100, len(tm.Segments))
-	for i, s := range tm.Segments {
-		t.rep.Raw(ui.Neutral, "  segment %d: dub %s-%s -> ref %s-%s (slope %.3f)\n",
-			i+1, clock(s.DubStart), clock(s.DubEnd), clock(s.RefStart), clock(s.RefEnd), s.Slope)
+	worst := 0.0
+	for _, s := range tm.Segments {
+		worst = max(worst, s.Residual)
 	}
+	t.rep.Raw(ui.Neutral, "  sampling grid %dms, worst segment residual %dms\n",
+		int(math.Round(t.cfg.Interval*1000)), int(math.Round(worst*1000)))
+	if tm.Fallback {
+		t.rep.Raw(ui.WarnTone, "  note: the piecewise map was fragmented - using one global fit instead\n")
+	}
+	for i, s := range tm.Segments {
+		t.rep.Raw(ui.Neutral, "  segment %d: dub %s-%s -> ref %s-%s (slope %.4f, residual %dms)\n",
+			i+1, clock(s.DubStart), clock(s.DubEnd), clock(s.RefStart), clock(s.RefEnd), s.Slope, int(math.Round(s.Residual*1000)))
+	}
+	const gapReport = 0.02
+	var gaps [][2]float64
 	prevEnd := 0.0
 	for _, s := range tm.Segments {
-		if s.RefStart-prevEnd >= 1 {
-			t.rep.Raw(ui.WarnTone, "  gap: ref %s-%s has no dub counterpart (Czech track silent)\n", clock(prevEnd), clock(s.RefStart))
+		if s.RefStart-prevEnd >= gapReport {
+			gaps = append(gaps, [2]float64{prevEnd, s.RefStart})
 		}
 		prevEnd = max(prevEnd, s.RefEnd)
 	}
-	if in.refDur-prevEnd >= 1 {
-		t.rep.Raw(ui.WarnTone, "  gap: ref %s-%s has no dub counterpart (Czech track silent)\n", clock(prevEnd), clock(in.refDur))
+	if in.refDur-prevEnd >= gapReport {
+		gaps = append(gaps, [2]float64{prevEnd, in.refDur})
+	}
+	totalGap, longestGap := 0.0, 0.0
+	for _, g := range gaps {
+		d := g[1] - g[0]
+		totalGap += d
+		longestGap = max(longestGap, d)
+		t.rep.Raw(ui.WarnTone, "  gap: ref %.2fs-%.2fs (%.2fs) has no dub counterpart (dub track silent)\n", g[0], g[1], d)
+	}
+	if len(gaps) > 0 {
+		t.rep.Raw(ui.WarnTone, "  silence: %d gap(s), %.2fs total, longest %.2fs\n", len(gaps), totalGap, longestGap)
 	}
 	first, last := tm.Segments[0], tm.Segments[len(tm.Segments)-1]
-	t.rep.Raw(ui.Neutral, "dub %.1fs -> ref %.1fs; dub %.1fs -> ref %.1fs\n",
+	t.rep.Raw(ui.Neutral, "dub %.2fs -> ref %.2fs; dub %.2fs -> ref %.2fs\n",
 		first.DubStart, first.RefStart, last.DubEnd, last.RefEnd)
 	step := max(1, (int(in.dubDur)+9)/10)
 	for s := 0; s < int(in.dubDur); s += step {
 		if ref, ok := tm.refAtDub(float64(s)); ok {
-			t.rep.Raw(ui.Neutral, "  dub %5ds -> ref %6.1fs  (offset %+.1fs)\n", s, ref, ref-float64(s))
+			t.rep.Raw(ui.Neutral, "  dub %5ds -> ref %7.2fs  (offset %+.2fs)\n", s, ref, ref-float64(s))
 		} else {
 			t.rep.Raw(ui.Neutral, "  dub %5ds -> (no reference counterpart)\n", s)
 		}
@@ -646,7 +706,7 @@ func (t *tool) muxAligned(in *inputs, tm *timingMap, outPath, outFmt string) err
 	if err != nil {
 		return err
 	}
-	if err := resampleDub(src, dst, tm, in.refDur); err != nil {
+	if err := resampleDub(src, dst, tm, in.refDur, in.dubAudioLead); err != nil {
 		dst.Close()
 		return err
 	}

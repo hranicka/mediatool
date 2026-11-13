@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
 	"strconv"
 	"strings"
 
@@ -45,6 +46,7 @@ type Stream struct {
 	SampleRate     string      `json:"sample_rate"`
 	BitRate        string      `json:"bit_rate"`
 	RFrameRate     string      `json:"r_frame_rate"`
+	StartTime      string      `json:"start_time"`
 	FieldOrder     string      `json:"field_order"`
 	ColorPrimaries string      `json:"color_primaries"`
 	ColorTransfer  string      `json:"color_transfer"`
@@ -60,6 +62,10 @@ func (s Stream) BitRateInt() int {
 	n, _ := strconv.Atoi(s.BitRate)
 	return n
 }
+
+// StartSeconds returns the stream's start timestamp in seconds (false when
+// ffprobe omits it or reports N/A).
+func (s Stream) StartSeconds() (float64, bool) { return parseSeconds(s.StartTime) }
 
 // RFrameRateInt returns r_frame_rate as a frames-per-second number
 // (0 when missing or unparseable, e.g. "0/0").
@@ -87,9 +93,14 @@ type Format struct {
 	// "mov,mp4,m4a,3gp,3g2,mj2").
 	FormatName string `json:"format_name"`
 	Duration   string `json:"duration"`
+	StartTime  string `json:"start_time"`
 	Size       string `json:"size"`
 	BitRate    string `json:"bit_rate"`
 }
+
+// StartSeconds returns the container's start timestamp in seconds (false
+// when ffprobe omits it or reports N/A).
+func (f Format) StartSeconds() (float64, bool) { return parseSeconds(f.StartTime) }
 
 // Info is the parsed ffprobe output of one file.
 type Info struct {
@@ -134,6 +145,15 @@ func (i *Info) ByType() map[string][]Typed {
 func (i *Info) Duration() (float64, bool) {
 	d, err := strconv.ParseFloat(i.Format.Duration, 64)
 	return d, err == nil
+}
+
+// parseSeconds parses a ffprobe timestamp field.
+func parseSeconds(v string) (float64, bool) {
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
+		return 0, false
+	}
+	return f, true
 }
 
 // Size returns the container size in bytes (false when missing).
