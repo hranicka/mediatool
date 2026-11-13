@@ -36,6 +36,14 @@ func sampleL(res []byte, frame int) int16 {
 	return int16(binary.LittleEndian.Uint16(res[frame*4:]))
 }
 
+// oneSegmentMap builds a timing map with a single segment covering the
+// whole reference: ref = intercept + speed*dub on [refStart, refEnd).
+func oneSegmentMap(refStart, refEnd, slope, intercept float64) *timingMap {
+	return &timingMap{Speed: slope, Segments: []segment{{
+		RefStart: refStart, RefEnd: refEnd, Slope: slope, Intercept: intercept,
+	}}}
+}
+
 func TestResampleDubConstantOffset(t *testing.T) {
 	const sr = sampleRate
 	raw := dubRaw(4 * sr)
@@ -43,7 +51,7 @@ func TestResampleDubConstantOffset(t *testing.T) {
 	// +2 s offset: output sample t reads dub frame t-2 s; the reference is
 	// 6 s long (2 s dub-free head + 4 s dub)
 	var out bytes.Buffer
-	if err := resampleDub(bytes.NewReader(raw), &out, line{speed: 1, intercept: 2}, 6.0, 4.0, 0); err != nil {
+	if err := resampleDub(bytes.NewReader(raw), &out, oneSegmentMap(2, 6, 1, 2), 6.0, 0); err != nil {
 		t.Fatalf("resampleDub: %v", err)
 	}
 	res := out.Bytes()
@@ -69,7 +77,7 @@ func TestResampleDubSilentPastDubEnd(t *testing.T) {
 	raw := dubRaw(2 * sr) // 2 s dub
 
 	var out bytes.Buffer
-	if err := resampleDub(bytes.NewReader(raw), &out, line{speed: 1}, 8.0, 2.0, 0); err != nil {
+	if err := resampleDub(bytes.NewReader(raw), &out, oneSegmentMap(0, 2, 1, 0), 8.0, 0); err != nil {
 		t.Fatalf("resampleDub: %v", err)
 	}
 	res := out.Bytes()
@@ -93,7 +101,7 @@ func TestResampleDubDropsDubHead(t *testing.T) {
 	// the dub runs 2 s ahead of the reference (a longer intro): the dub's
 	// first 2 s have no reference counterpart and must be dropped
 	var out bytes.Buffer
-	if err := resampleDub(bytes.NewReader(raw), &out, line{speed: 1, intercept: -2}, 4.0, 6.0, 0); err != nil {
+	if err := resampleDub(bytes.NewReader(raw), &out, oneSegmentMap(0, 4, 1, -2), 4.0, 0); err != nil {
 		t.Fatalf("resampleDub: %v", err)
 	}
 	res := out.Bytes()
@@ -113,7 +121,7 @@ func TestResampleDubAllSilentWhenNoOverlap(t *testing.T) {
 	// the line lands the whole dub outside the reference: degenerate, but
 	// it must produce silence, not read frames or panic
 	var out bytes.Buffer
-	if err := resampleDub(bytes.NewReader(dubRaw(4*sr)), &out, line{speed: 1, intercept: 100}, 2.0, 4.0, 0); err != nil {
+	if err := resampleDub(bytes.NewReader(dubRaw(4*sr)), &out, oneSegmentMap(100, 104, 1, 100), 2.0, 0); err != nil {
 		t.Fatalf("resampleDub: %v", err)
 	}
 	res := out.Bytes()
@@ -136,7 +144,7 @@ func TestResampleDubFadesAtReferenceHead(t *testing.T) {
 	}
 	// the dub body starts 0.5 s into the reference
 	var out bytes.Buffer
-	if err := resampleDub(bytes.NewReader(raw), &out, line{speed: 1, intercept: 0.5}, 1.0, 0.5, 0); err != nil {
+	if err := resampleDub(bytes.NewReader(raw), &out, oneSegmentMap(0.5, 1, 1, 0.5), 1.0, 0); err != nil {
 		t.Fatalf("resampleDub: %v", err)
 	}
 	res := out.Bytes()
@@ -161,7 +169,7 @@ func TestResampleDubStretchedMap(t *testing.T) {
 		binary.LittleEndian.PutUint16(raw[i*4+2:], uint16(2*i))
 	}
 	var out bytes.Buffer
-	if err := resampleDub(bytes.NewReader(raw), &out, line{speed: 2}, 0.04, 0.02, 0); err != nil {
+	if err := resampleDub(bytes.NewReader(raw), &out, oneSegmentMap(0, 0.04, 2, 0), 0.04, 0); err != nil {
 		t.Fatalf("resampleDub: %v", err)
 	}
 	res := out.Bytes()
@@ -181,10 +189,9 @@ func TestResampleDubPALStretch(t *testing.T) {
 	// a PAL-speedup dub (4.27 % faster) is stretched onto the reference:
 	// output frame t reads dub position t/1.0427, interpolated
 	raw := rampRaw(10000, 30000)
-	l := line{speed: 1.0427}
 	var out bytes.Buffer
 	refDur := 2.0 * 1.0427
-	if err := resampleDub(bytes.NewReader(raw), &out, l, refDur, 2.0, 0); err != nil {
+	if err := resampleDub(bytes.NewReader(raw), &out, oneSegmentMap(0, refDur, 1.0427, 0), refDur, 0); err != nil {
 		t.Fatalf("resampleDub: %v", err)
 	}
 	res := out.Bytes()
@@ -209,7 +216,7 @@ func TestResampleDubAudioLead(t *testing.T) {
 	// the raw extraction dropped 0.5 s of leading silence: output 0.5 s
 	// must address the first extracted frame, not the middle of the track
 	var out bytes.Buffer
-	if err := resampleDub(bytes.NewReader(raw), &out, line{speed: 1}, 2.0, 2.0, 0.5); err != nil {
+	if err := resampleDub(bytes.NewReader(raw), &out, oneSegmentMap(0, 2, 1, 0), 2.0, 0.5); err != nil {
 		t.Fatalf("resampleDub: %v", err)
 	}
 	res := out.Bytes()
@@ -260,7 +267,7 @@ func TestResampleDubTrailingPartialFrame(t *testing.T) {
 	full := dubRaw(100)
 	raw := full[:len(full)-2] // half a frame
 	var out bytes.Buffer
-	if err := resampleDub(bytes.NewReader(raw), &out, line{speed: 1}, 1.0, 1.0, 0); err != nil {
+	if err := resampleDub(bytes.NewReader(raw), &out, oneSegmentMap(0, 1, 1, 0), 1.0, 0); err != nil {
 		t.Fatalf("resampleDub: %v", err)
 	}
 	res := out.Bytes()
@@ -286,9 +293,9 @@ func TestResampleDubInterpolates(t *testing.T) {
 		binary.LittleEndian.PutUint16(raw[i*4:], uint16(2*i))
 		binary.LittleEndian.PutUint16(raw[i*4+2:], uint16(2*i))
 	}
-	l := line{speed: 1, intercept: -0.5 / float64(sampleRate)}
 	var out bytes.Buffer
-	if err := resampleDub(bytes.NewReader(raw), &out, l, 1.0, 1.0, 0); err != nil {
+	if err := resampleDub(bytes.NewReader(raw), &out,
+		oneSegmentMap(0, 1, 1, -0.5/float64(sampleRate)), 1.0, 0); err != nil {
 		t.Fatalf("resampleDub: %v", err)
 	}
 	res := out.Bytes()

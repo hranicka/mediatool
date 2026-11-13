@@ -315,8 +315,8 @@ func (t *tool) processPair(i, n int, p pair) {
 			details = append(details, fmt.Sprintf("backups: %s, %s", p.ref+".old", p.dub+".old"))
 		}
 		t.rep.Would("Would align", i, n, p.ref,
-			fmt.Sprintf("speed %.4f, dub 0 lands at ref %+.2fs, %.0f%% of the shared span matched",
-				fit.Line.speed, fit.Line.intercept, fit.InlierFrac*100),
+			fmt.Sprintf("speed %.4f, %d segment(s), %.0f%% of the shared span matched",
+				fit.Speed, len(fit.Segments), fit.InlierFrac*100),
 			append([]string{action}, details...)...)
 		t.aligned++
 		return

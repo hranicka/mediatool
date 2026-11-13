@@ -2,23 +2,29 @@
 
 ## 2.2.0
 
-- **`align` timing reworked: one robust line instead of a piecewise map**
-  — dubs and originals are the same edit up to one global speed
-  difference (PAL speedup, NTSC transfers, either direction) and one time
-  shift (a shorter or longer intro or credits), so the whole piecewise
-  segment machinery (run splitting and merging, gap bridging, monotonic
-  joins, global fallback, resync scans) is replaced by a single fitted
-  line `ref = offset + speed × dub`. A coarse global match locates the
-  line, a constrained walk refines it at the full sampling grid, and the
-  final fit keeps only the matches that agree with it, so false hits from
-  similar shots cannot bend the timing. The run validates the fit
-  (inlier share, span support, median and p95 residual, plausible speed)
-  and refuses loudly instead of producing wrong lipsync; mid-video scene
-  cuts between the two files are refused by design. The duration ratio is
-  reported next to the fitted speed (with its PAL/NTSC label) but never
-  refuses: a modified intro or credits can flip it against the true speed. The report prints the fitted speed with its
-  known-conversion label (PAL speedup etc.), the duration agreement, the
-  match evidence and the silent head/tail spans.
+- **`align` timing reworked: one robust shared-speed map instead of a
+  piecewise guess** — dubs and originals are the same edit up to one
+  global speed difference (PAL speedup, NTSC transfers, either
+  direction), one time shift (a shorter or longer intro or credits), and
+  a few mid-video cuts (TV broadcasts trim scenes for their timeslot).
+  The old walk + piecewise machinery tried to cope with all of that one
+  heuristic at a time and got the lipsync wrong; the new fit estimates
+  the speed once (Theil–Sen over short-baseline pairs, immune to the
+  cut bias that plagued long baselines), locates the offset jumps,
+  refines every segment with a constrained walk at the full sampling
+  grid, and keeps only the matches that agree with their segment. Cut
+  boundaries land on the exact match where the offset flips, removed
+  scenes stay silent on the dub track, and the report prints the fitted
+  speed with its known-conversion label (PAL speedup etc.), every
+  segment with its offset and residual, and each silent gap. The run
+  validates the map (inlier count and span support, median and p95
+  residual, per-segment residuals and tilt, plausible speed,
+  fragmentation) and refuses loudly instead of producing wrong lipsync;
+  the duration ratio is cross-checked against the detected cuts but
+  never refuses. Verified on a real EN WEB-DL vs Czech TV capture
+  library: every episode fits at PAL speedup 23.976→25 with 20 ms
+  residual, and each broadcast's 2–3 scene trims land as digital silence
+  at the exact mapped positions.
 - **`align` lipsync precision** — the default frame sampling interval drops
   from 0.2 s to 0.05 s (20 fps), which limits the timing map to about
   ±25 ms instead of ±100 ms. Each segment line now reports its fitted

@@ -260,33 +260,33 @@ like the timing hashes, so a repeated run is instant. Use
 `-no-content-pair` to keep the pure name pairing.
 
 **Timing.** Frames sampled from both files every `-interval` seconds
-(default 0.05, i.e. 20 fps) are perceptually hashed, and one **timing
-line** `ref = offset + speed × dub` is fitted through the matches. The
-model is that both files are the same edit up to one global speed
-difference (dub masters often run at PAL speedup, an NTSC transfer, or
-the reverse) and one time shift (a shorter or longer intro or credits).
-A coarse global pass locates the line, a constrained walk refines it at
-the full sampling grid, and the final fit keeps only the matches that
-agree with it — false hits from similar shots cannot bend the timing.
-The 50 ms grid puts the residual around 20–30 ms, well under one video
-frame. The run validates the fit and refuses loudly — instead of
-producing wrong lipsync — when the matches do not follow one line (low
-inlier share, weak span support, large median or p95 residual), or when
-the fitted speed is outside the plausible conversions. The duration ratio
-is reported next to the fitted speed for context and flagged when it
-points the other way, but it never refuses: a modified intro or credits
-can flip it against the true speed. Reference regions with no dub counterpart (an extra
-intro or credits tail) stay silent on the Czech track (the English track
-is still there); dub regions past the reference are dropped; both
-transitions are faded. The report prints the fitted speed with its
-known-conversion label (PAL speedup etc.), the duration agreement, the
-match evidence, the silent and dropped spans, and an offset table.
-Highly self-similar content (synthetic patterns, long static scenes)
-gets a caution note. Mid-video scene cuts between the two files are not
-supported — the validation refuses them. If the dubbed audio stream
-starts after the first video frame (common in broadcast TS), that lead
-is kept as silence so the authored A/V relationship survives. The dub is
-resampled as AAC 192k stereo (`-bitrate` overrides).
+(default 0.05, i.e. 20 fps) are perceptually hashed, and a **timing map**
+is fitted through the matches. The model: both files are the same edit up
+to one global speed difference (dub masters often run at PAL speedup, an
+NTSC transfer, or the reverse), one time shift (a shorter or longer intro
+or credits), and a few mid-video cuts — TV broadcasts routinely trim
+scenes to fit their timeslot. The map is therefore piecewise, with all
+segments sharing one speed and differing only in offset; the reference
+regions between segments (removed scenes, trimmed credits) stay silent on
+the dub track while the original audio keeps playing. A coarse global
+pass estimates the speed (Theil–Sen over short-baseline pairs, so cuts
+cannot bias it) and locates the offset jumps; a constrained walk refines
+every segment at the full sampling grid; the final fit keeps only the
+matches that agree with their segment, and cut boundaries are refined to
+the exact match where the offset flips. The 50 ms grid puts the residual
+around 20–30 ms, well under one video frame. The run validates the map
+and refuses loudly — instead of producing wrong lipsync — when the
+matches do not support it (low inlier count or span support, large
+median or p95 residual, a segment that will not hold one offset, a speed
+outside the plausible conversions, fragmentation). The duration ratio is
+reported next to the fitted speed for context and cross-checked against
+the detected cuts (a mismatch warns about missed small cuts), but it
+never refuses: a modified intro or credits can flip it against the true
+speed. Highly self-similar content (synthetic patterns, long static
+scenes) gets a caution note. If the dubbed audio stream starts after the
+first video frame (common in broadcast TS), that lead is kept as silence
+so the authored A/V relationship survives. The dub is resampled as AAC
+192k stereo (`-bitrate` overrides).
 
 **Frame cache.** The hashing phase decodes each file fully, so the
 perceptual hashes are cached under `$XDG_CACHE_HOME/mediatool/align`

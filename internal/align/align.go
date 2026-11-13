@@ -1,13 +1,14 @@
 // Package align appends a dubbed audio track to a reference video by
 // timing the dub onto the reference timeline: frames sampled from both
-// files are perceptually hashed (shared with dedup via vhash) and one
-// affine timing line (ref = offset + speed × dub) is fitted robustly —
-// dub masters often run at a different speed (PAL speedup, NTSC
-// transfers) and may start or end earlier or later than the reference
-// (a modified intro or credits). A single pair can be aligned ad hoc, or
-// a whole directory can be paired by episode/title naming (weak
-// episode-tag matches verified by video content) and processed in place
-// with .old backups.
+// files are perceptually hashed (shared with dedup via vhash) and a
+// timing map is fitted robustly — dub masters often run at a different
+// speed (PAL speedup, NTSC transfers), may start or end earlier or later
+// than the reference (a modified intro or credits), and TV broadcasts
+// often carry a few trimmed scenes mid-file, so the map is piecewise with
+// one shared speed and per-segment offsets. A single pair can be aligned
+// ad hoc, or a whole directory can be paired by episode/title naming
+// (weak episode-tag matches verified by video content) and processed in
+// place with .old backups.
 package align
 
 import (
@@ -559,8 +560,8 @@ func (t *tool) dubAudioLabel(in *inputs) string {
 	return s
 }
 
-// buildFit hashes both files and fits the timing line.
-func (t *tool) buildFit(in *inputs) (*timingFit, error) {
+// buildFit hashes both files and fits the timing map.
+func (t *tool) buildFit(in *inputs) (*timingMap, error) {
 	refHashes, err := t.hashFrames(in.ref, "reference")
 	if err != nil {
 		return nil, fmt.Errorf("reference: %w", err)
@@ -653,60 +654,87 @@ func (t *tool) cleanCache() error {
 	return nil
 }
 
-// printFit renders the fitted timing line: the speed with its
-// known-conversion label, the evidence supporting the fit, the silent and
-// dropped spans at the ends, and an offset table.
-func (t *tool) printFit(fit *timingFit, in *inputs) {
-	l := fit.Line
-	line := fmt.Sprintf("Timing line: ref = %+.2fs + %.5f × dub", l.intercept, l.speed)
-	if note := speedNote(l.speed); note != "" {
+// printFit renders the fitted timing map: the speed with its
+// known-conversion label, the segments with their offsets, the silent
+// gaps (removed scenes) and an offset table.
+func (t *tool) printFit(m *timingMap, in *inputs) {
+	line := fmt.Sprintf("Timing: speed %.5f", m.Speed)
+	if note := speedNote(m.Speed); note != "" {
 		line += " (" + note + ")"
 	}
+	line += fmt.Sprintf(", %d segment(s)", len(m.Segments))
 	t.rep.Raw(ui.GoodTone, "%s\n", line)
 	t.rep.Raw(ui.Neutral, "  durations: ref %s, dub %s (ratio %.4f vs fitted speed %.5f)\n",
-		clock(in.refDur), clock(in.dubDur), fit.DurRatio, l.speed)
-	if d1 := math.Abs(l.speed - 1); d1 > directionTol {
-		if d2 := math.Abs(fit.DurRatio - 1); d2 > directionTol && (l.speed-1)*(fit.DurRatio-1) < 0 {
+		clock(in.refDur), clock(in.dubDur), m.DurRatio, m.Speed)
+	if d1 := math.Abs(m.Speed - 1); d1 > directionTol {
+		if d2 := math.Abs(m.DurRatio - 1); d2 > directionTol && (m.Speed-1)*(m.DurRatio-1) < 0 {
 			t.rep.Note("note: the duration ratio points the opposite way from the fitted speed - a modified intro/credits or a different cut explains this, but verify the pairing")
 		}
 	}
 	t.rep.Raw(ui.Neutral, "  %d of %d dub frames in the shared span match (%.0f%%), span support %.0f%%\n",
-		fit.NInliers, fit.NFine, fit.InlierFrac*100, fit.SpanSupport*100)
+		m.NInliers, m.NFine, m.InlierFrac*100, m.SpanSupport*100)
 	t.rep.Raw(ui.Neutral, "  median residual %dms, p95 %dms, sampling grid %dms\n",
-		int(math.Round(fit.MedianResid*1000)), int(math.Round(fit.P95Resid*1000)), int(math.Round(t.cfg.Interval*1000)))
+		int(math.Round(m.MedianResid*1000)), int(math.Round(m.P95Resid*1000)), int(math.Round(t.cfg.Interval*1000)))
+	for i, s := range m.Segments {
+		t.rep.Raw(ui.Neutral, "  segment %d: dub %s-%s -> ref %s-%s (offset %+.2fs, %d matches, residual %dms)\n",
+			i+1, clock(s.DubStart), clock(s.DubEnd), clock(s.RefStart), clock(s.RefEnd),
+			s.refAt(s.DubStart)-s.DubStart, s.Matches, int(math.Round(s.Residual*1000)))
+		// a gap before the reference end is the silent tail, reported below
+		if i+1 < len(m.Segments) {
+			if gap := m.Segments[i+1].RefStart - s.RefEnd; gap > 0.5 {
+				t.rep.Raw(ui.WarnTone, "  gap: ref %s-%s (%.1fs) has no dub audio (cut in the dub?)\n",
+					clock(s.RefEnd), clock(m.Segments[i+1].RefStart), gap)
+			}
+		}
+	}
 	// reference regions with no dub counterpart stay silent on the dub
 	// track; dub regions without a reference counterpart are dropped.
 	// Spans under half a second are fade noise and not reported.
-	if head := l.intercept; head > 0.5 {
+	if head := m.Segments[0].RefStart; head > 0.5 {
 		t.rep.Raw(ui.WarnTone, "  silent head: %s of the reference has no dub audio\n", clock(head))
 	}
-	if head := -l.intercept / l.speed; head > 0.5 {
+	if head := m.Segments[0].DubStart; head > 0.5 {
 		t.rep.Raw(ui.WarnTone, "  dropped head: the dub's first %s have no reference counterpart\n", clock(head))
 	}
-	mappedEnd := l.refAt(in.dubDur)
-	if tail := in.refDur - mappedEnd; tail > 0.5 {
+	last := m.Segments[len(m.Segments)-1]
+	if tail := in.refDur - last.RefEnd; tail > 0.5 {
 		t.rep.Raw(ui.WarnTone, "  silent tail: %s of the reference after the dub has no dub audio\n", clock(tail))
 	}
-	if drop := (mappedEnd - in.refDur) / l.speed; drop > 0.5 {
+	if drop := in.dubDur - last.dubAt(last.RefEnd); drop > 0.5 && last.RefEnd >= in.refDur-0.5 {
 		t.rep.Raw(ui.WarnTone, "  dropped tail: the dub's last %s run past the reference end\n", clock(drop))
 	}
-	if shortest := math.Min(in.refDur, in.dubDur); shortest > 0 && fit.Overlap < warnOverlap*shortest {
-		t.rep.Note(fmt.Sprintf("note: the files share only %.0f%% of their content (modified intro/credits or a different cut)", fit.Overlap/shortest*100))
+	if shortest := math.Min(in.refDur, in.dubDur); shortest > 0 && m.Overlap < warnOverlap*shortest {
+		t.rep.Note(fmt.Sprintf("note: the files share only %.0f%% of their content (modified intro/credits or a different cut)", m.Overlap/shortest*100))
+	}
+	// consistency: the duration difference must be explained by the
+	// silent ends and the detected cuts - a mismatch is the fingerprint
+	// of smaller cuts the detection missed, which would leave drift
+	gapTotal := 0.0
+	insertDub := 0.0
+	for i := 0; i+1 < len(m.Segments); i++ {
+		gapTotal += m.Segments[i+1].RefStart - m.Segments[i].RefEnd
+		insertDub += max(0, m.Segments[i+1].DubStart-m.Segments[i].DubEnd)
+	}
+	droppedHead := m.Segments[0].DubStart
+	droppedTail := max(0, in.dubDur-last.DubEnd)
+	detected := m.Segments[0].RefStart + (in.refDur - last.RefEnd) + gapTotal -
+		m.Speed*(droppedHead+droppedTail+insertDub)
+	if unexplained := in.refDur - m.Speed*in.dubDur - detected; math.Abs(unexplained) > 1.0 {
+		t.rep.Note(fmt.Sprintf("note: the duration difference leaves %.1fs unexplained by the detected cuts - smaller cuts may have been missed (check the offsets below for drift)", unexplained))
 	}
 	step := max(1, (int(in.dubDur)+9)/10)
 	for s := 0; s <= int(in.dubDur); s += step {
-		ref := l.refAt(float64(s))
-		if ref < 0 || ref > in.refDur {
-			t.rep.Raw(ui.Neutral, "  dub %5ds -> (outside the reference)\n", s)
-		} else {
+		if ref, ok := m.refAtDub(float64(s)); ok && ref >= 0 && ref <= in.refDur {
 			t.rep.Raw(ui.Neutral, "  dub %5ds -> ref %8.2fs  (offset %+.2fs)\n", s, ref, ref-float64(s))
+		} else {
+			t.rep.Raw(ui.Neutral, "  dub %5ds -> (outside the reference)\n", s)
 		}
 	}
 }
 
 // muxAligned extracts the dubbed audio, resamples it onto the reference
 // timeline and muxes every reference stream plus the new track.
-func (t *tool) muxAligned(in *inputs, fit *timingFit, outPath, outFmt string) error {
+func (t *tool) muxAligned(in *inputs, m *timingMap, outPath, outFmt string) error {
 	work, err := os.MkdirTemp("", "mediatool-align-")
 	if err != nil {
 		return err
@@ -736,7 +764,7 @@ func (t *tool) muxAligned(in *inputs, fit *timingFit, outPath, outFmt string) er
 	if err != nil {
 		return err
 	}
-	if err := resampleDub(src, dst, fit.Line, in.refDur, in.dubDur, in.dubAudioLead); err != nil {
+	if err := resampleDub(src, dst, m, in.refDur, in.dubAudioLead); err != nil {
 		dst.Close()
 		return err
 	}

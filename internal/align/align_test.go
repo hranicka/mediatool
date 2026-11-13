@@ -143,7 +143,7 @@ func TestAlignRunAll(t *testing.T) {
 	}
 
 	got := out.String()
-	if !strings.Contains(got, "Timing line: ref = +2.00s + 1.00000 × dub (same speed)") {
+	if !strings.Contains(got, "Timing: speed 1.00000 (same speed), 1 segment(s)") {
 		t.Errorf("missing timing line: %s", got)
 	}
 	// the unmatched reference head is reported as a silent span
