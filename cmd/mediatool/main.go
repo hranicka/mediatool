@@ -30,7 +30,7 @@ Commands:
   dup       report duplicate audio tracks (read-only)
   dedup     report content duplicates across files (read-only)
   enhance   AI-upscale with Real-ESRGAN and re-encode to HEVC 1080p
-  align     append a dubbed audio track to a reference video by scene matching
+  align     append a dubbed audio track by scene matching (pair or directory batch)
   version   print the version
 
 Library-touching commands work on a directory (or a single file where noted),

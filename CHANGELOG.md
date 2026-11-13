@@ -1,5 +1,49 @@
 # Changelog
 
+## 2.2.0
+
+- **`align` batch mode** — pairs a whole directory of references with
+  dubbed versions and aligns each couple in place: the reference is
+  replaced by the aligned file, the original reference and the dub are
+  kept as `.old` (`-no-backup` replaces the reference and deletes the
+  dub). Pairing uses exact normalized names, episode tags (`S06E02`,
+  `6x02`, `S2E5`, `Season 6 Episode 2`) or movie title+year, ignoring
+  release and language markers. A matching episode tag alone is enough,
+  even when the show names differ (marked `title differs` with a verify
+  notice); ambiguous names are never guessed, missing counterparts are
+  reported and skipped, and `-pair ref=dub` resolves the rest.
+  `-pair-only` prints the plan before decoding; `-n` is a full dry run. A
+  single directory works with `-dub-suffix .cz`. The new
+  `.mediatool-align-ignore` file is honored in both directories.
+- **`align` mixed file + directory input** — `align <reference>
+  <dubdir>` (or the reverse) searches the directory with the normal
+  episode/title pairing and processes the single match as a one-pair
+  batch run: the matched reference is replaced in place with `.old`
+  backups (`-no-backup` removes both originals). This is the "one
+  episode, a folder of dubs" workflow; `-pair-only`, `-n`, `-pair` and
+  `-i` apply, and a missing counterpart skips with the closest
+  suggestion.
+- **`align` piecewise timing map** — the global quadratic fit is replaced
+  by affine segments with outlier rejection. The walk now resynchronizes
+  across long intros, skipped scenes and dub-only inserts instead of
+  staying inside the old ±10 s window; reference regions with no dub
+  counterpart stay silent on the dubbed track and dub-only regions are
+  dropped. The run reports coverage, segments and gaps and refuses maps
+  covering less than half of either file, replacing the old 80–125 %
+  span check.
+- **`align` keeps every reference stream** — the mux now copies all
+  reference audio tracks, subtitles, attachments/fonts, chapters and
+  metadata (previously only `a:0` and subtitles), selects the dub track
+  by `-lang-dub`, and tags only the appended track. `-lang-ref` is used
+  as a sanity check for multi-audio references.
+- **`align` frame-hash cache** — the expensive perceptual hashing is
+  cached under `$XDG_CACHE_HOME/mediatool/align` (keyed by path, size,
+  mtime and interval), so a `-n` run populates it and the following real
+  run skips both full decodes. Only the 1024-bit hashes are stored, never
+  video frames. `-no-cache` disables the cache, `-no-backup` removes the
+  entries of the swapped files, and `align -clean-cache [-n]` clears the
+  cache (including temp files left by an interrupted write).
+
 ## 2.1.1
 
 - **clean tolerates the remux index overhead for tiny removals** — removing

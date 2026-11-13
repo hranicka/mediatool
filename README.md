@@ -24,6 +24,8 @@ make build      # dist/mediatool
 | `clean` | remove audio/subtitle tracks of non-whitelisted languages (default: cs + en) |
 | `ac3` | append AC3 640k compatibility tracks for DTS/TrueHD/FLAC audio |
 | `dup` | report duplicate audio tracks (read-only) |
+| `dedup` | report content duplicates across files (read-only) |
+| `align` | append a dubbed audio track by scene matching (single pair or directory batch) |
 | `enhance` | AI-upscale with Real-ESRGAN and re-encode to HEVC 1080p |
 | `version` | print the version |
 
@@ -181,22 +183,96 @@ run a while for large libraries; everything else is cheap.
 ```
 mediatool align [-interval 0.2] [-match-dist 45] [-bitrate 192k]
                 [-lang-ref eng] [-lang-dub ces] [-n] <reference> <dubbed> [output]
+mediatool align [same flags] [-pair ref=dub] [-pair-only] [-no-backup] <refdir> <dubdir>
+mediatool align [same flags] <reference> <dubbed-dir>
+mediatool align [same flags] <reference-dir> <dubbed>
+mediatool align [same flags] -dub-suffix .cz <dir>
+mediatool align -clean-cache [-cache-dir dir] [-n]
 ```
 
-Appends a **dubbed audio track to a reference video** by scene matching
-(the `REF+dub.mkv` output carries the reference video, its own audio and
-subtitles plus the resampled dub as a second AAC track). Frames sampled
-from both files are perceptually hashed; each dubbed frame matches the
-best reference frame within a windowed neighborhood (±10 s at the default
-interval, so shifted starts must stay inside that bound), a quadratic fit
-with outlier rejection turns the matches into a smooth monotonic timing
-map (tolerating different framerates and cut scenes), and the dub audio
-is resampled onto that map before muxing. The run refuses implausible
-maps (span outside 80–125% of the dub's duration — the signature of
-self-similar content where matches map noise) and warns when frames are
-highly self-similar. `-n` stops after the
-timing map and prints it — check the offsets before committing to the
-encode. Port of the align_audio.py workflow.
+Appends a **dubbed audio track to a reference video** by scene matching.
+The aligned file carries **every reference stream** — video, all audio
+tracks, subtitles, attachments/fonts, chapters and metadata — plus the
+selected dub track as an AAC track tagged with `-lang-dub` and titled
+`Dubbed (resampled)`. Reference audio tags are left untouched and the
+appended track is marked non-default, so players keep selecting one of
+the reference tracks. The dub track is chosen by `-lang-dub` (alias
+aware); when the dub has no matching language tag, the first audio track
+is used with a notice.
+
+**Single pair (two files)** writes a new `<ref-stem>+dub.mkv` (or the
+given output) and leaves both inputs untouched. `-n` stops after the
+timing map and prints it.
+
+**One file + one directory** (`align <reference> <dubdir>` or
+`align <refdir> <dubbed>`) searches the directory for the counterpart
+using the same pairing rules, then treats the result as a **one-pair
+batch run**: the matched reference is replaced in place, with both inputs
+kept as `.old` (`-no-backup` removes them). This is the mode for "I have
+this one episode and a folder of dubs". `-pair-only`, `-n`, `-pair` and
+`-i` work; `-dub-suffix` does not apply. With no counterpart the run
+skips and prints the closest suggestion, touching nothing.
+
+**Directory batch** pairs two directories and replaces each reference in
+place with the aligned file:
+
+```
+Show.S01E02.mkv          aligned file (reference streams + Czech audio)
+Show.S01E02.mkv.old      original reference
+Show.S01E02.CZ.mkv.old   original dub
+```
+
+`-no-backup` replaces the reference and deletes the dub instead. A
+reference without a counterpart, an unused dub, an ambiguous name and an
+existing `.old` backup are reported and skipped; other pairs still run.
+A reference that already carries a `Dubbed (resampled)` track is skipped,
+so reruns are safe. The aligned file keeps the reference's mtime.
+
+**Pairing.** Two directories (`align <refdir> <dubdir>`) are the
+recommended layout: the names may differ. Pairing uses, in order: exact
+normalized stem → episode tag (`S06E02`, `6x02`, `Season 6 Episode 2`,
+`E02` with the folder as show name) plus show-title similarity → movie
+title+year. **A matching episode tag is enough on its own** — `S02E05`,
+`02x05` and `S2E5` all resolve to the same episode even when the show
+names differ; the plan marks such a pair `title differs` and adds a
+verify notice. Release tags (`1080p`, `WEB-DL`, `x265`, …) and trailing
+language markers (`CZ`, `CZE`, `dabing`, …) are ignored. A unique fuzzy
+title match is accepted and marked in the plan; ambiguous candidates
+(including several dubs sharing one episode) are never guessed — the run
+lists the closest dub as a suggestion. Use `-pair ref=dub` (repeatable)
+for files the naming magic cannot resolve; multi-episode names
+(`S01E01E02`) are never auto-paired. With one directory, `-dub-suffix
+.cz` splits the walk: `Movie.mkv` is the reference, `Movie.cz.mkv` the
+dub. `-pair-only` prints the pairing plan and stops before any decoding.
+
+**Timing.** Frames sampled from both files are perceptually hashed; each
+dubbed frame matches the reference, and a **piecewise timing map** of
+affine segments with outlier rejection handles different framerates (PAL
+speedup), shifted starts/ends and skipped or extra scenes. Reference
+regions with no dub counterpart stay silent on the Czech track (the
+English track is still there); dub-only regions are dropped. The run
+reports match coverage, the segments and every gap, and refuses maps
+covering less than half of either file. Highly self-similar content
+(synthetic patterns, long static scenes) gets a caution note. The dub is
+resampled as AAC 192k stereo (`-bitrate` overrides).
+
+**Frame cache.** The hashing phase decodes each file fully, so the
+perceptual hashes are cached under `$XDG_CACHE_HOME/mediatool/align`
+(default `~/.cache/mediatool/align`, override with `-cache-dir` or
+`MEDIATOOL_CACHE_DIR`). Entries are keyed by path + size + mtime +
+interval, and contain only the 1024-bit hashes — **no video frames are
+written**. A `-n` run populates the cache, so the next real run reuses it
+(the phase line says "using cached … frames" instead of decoding). A
+changed file, a different `-interval` or a corrupt entry simply causes a
+re-hash. `-no-cache` disables reads and writes. `-no-backup` removes the
+entries of both aligned files after a successful swap. Clear the whole
+cache with `mediatool align -clean-cache` (`-n` only reports the file
+count and size); the directory is also safe to delete manually.
+
+The extracted dub audio is temporary: `dub.raw` and `dub_resampled.raw`
+live in the system temp directory (`/tmp/mediatool-align-*` on typical
+Linux) only during one pair and are removed after it (and on interrupt).
+A dry run does not extract audio at all.
 
 ### enhance
 
@@ -221,7 +297,7 @@ path — directory and file names both count; `#` comments allowed):
 | File | Read by |
 |---|---|
 | `.mediatool-ignore` in the target dir | all commands |
-| `.mediatool-convert-ignore` / `.mediatool-clean-ignore` / `.mediatool-ac3-ignore` / `.mediatool-enhance-ignore` | their command — per-command ignore lists, e.g. "not to clean" vs "not to re-encode" |
+| `.mediatool-convert-ignore` / `.mediatool-clean-ignore` / `.mediatool-ac3-ignore` / `.mediatool-enhance-ignore` / `.mediatool-align-ignore` | their command — per-command ignore lists, e.g. "not to clean" vs "not to re-encode" |
 | `.hevcconverter-ignore` / `.cleaner-ignore` / `.ac3converter-ignore` / `.enhance-ignore` | deprecated pre-2.0 per-command names, still honored with a rename warning |
 | `-i "a,b"` CLI list | all commands |
 
@@ -235,11 +311,13 @@ the search starts at the file's directory), so an ignore file in `/foo` or
 - **`.old` backups**: in-place replacements never clobber an existing
   `<file>.old` — convert skips such files up front; clean and ac3 refuse
   the swap and keep the original when one exists. Pass `-no-backup` to
-  convert/clean/ac3 to replace files in place without creating a backup
-  (the original is removed; `mediatool clean -old` removes the backups
-  a previous run left behind).
+  convert/clean/ac3/align to replace files in place without creating a
+  backup (the original is removed; `mediatool clean -old` removes the
+  backups a previous run left behind). Batch align keeps both the
+  reference and the dub as `.old`.
 - **Safety gates**: outputs are adopted only after duration, size and
-  stream-count checks.
+  stream-count checks; align verifies duration, the exact stream
+  inventory and the appended track's language.
 - **Dry run**: every modifying command accepts `-n` and prints its plan.
 
 ## Output & colors

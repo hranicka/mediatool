@@ -57,3 +57,57 @@ func SwapTo(src, newFile, dest string) (string, error) {
 	}
 	return old, nil
 }
+
+// SwapPair moves both inputs to their .old backups and newFile to dest,
+// rolling back on any failure. It returns the reference's backup path.
+func SwapPair(a, b, newFile, dest string) (string, error) {
+	if a == b {
+		return "", fmt.Errorf("reference and dub are the same file: %s", a)
+	}
+	oldA, oldB := a+".old", b+".old"
+	if _, err := os.Stat(oldA); err == nil {
+		return "", fmt.Errorf("backup %s already exists", oldA)
+	}
+	if _, err := os.Stat(oldB); err == nil {
+		return "", fmt.Errorf("backup %s already exists", oldB)
+	}
+	if err := os.Rename(a, oldA); err != nil {
+		return "", fmt.Errorf("cannot rename the reference: %w", err)
+	}
+	if err := os.Rename(b, oldB); err != nil {
+		if rbErr := os.Rename(oldA, a); rbErr != nil {
+			return "", fmt.Errorf("cannot rename the dub: %w (rollback also failed: %v - reference preserved as %s)", err, rbErr, oldA)
+		}
+		return "", fmt.Errorf("cannot rename the dub: %w", err)
+	}
+	if err := os.Rename(newFile, dest); err != nil {
+		rbB := os.Rename(oldB, b)
+		rbA := os.Rename(oldA, a)
+		if rbA != nil || rbB != nil {
+			return "", fmt.Errorf("cannot rename the aligned file: %w (rollback failures: reference %v, dub %v - originals preserved as %s and %s)", err, rbA, rbB, oldA, oldB)
+		}
+		return "", fmt.Errorf("cannot rename the aligned file: %w", err)
+	}
+	return oldA, nil
+}
+
+// ReplacePair puts newFile in place of a and removes b outright - the
+// -no-backup path for a two-input command. The aligned file is in place
+// before the originals are removed, so a failure cannot lose the result.
+func ReplacePair(a, b, newFile, dest string) error {
+	if a == b {
+		return fmt.Errorf("reference and dub are the same file: %s", a)
+	}
+	if err := os.Rename(newFile, dest); err != nil {
+		return fmt.Errorf("cannot rename the aligned file: %w", err)
+	}
+	if dest != a {
+		if err := os.Remove(a); err != nil {
+			return fmt.Errorf("aligned file is in place at %s, but the original reference could not be removed: %w", dest, err)
+		}
+	}
+	if err := os.Remove(b); err != nil {
+		return fmt.Errorf("aligned file is in place at %s, but the dubbed source could not be removed: %w", dest, err)
+	}
+	return nil
+}

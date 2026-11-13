@@ -139,3 +139,18 @@ func TestMatch(t *testing.T) {
 		t.Error("must not match other seasons")
 	}
 }
+
+func TestMerge(t *testing.T) {
+	a := List{entries: []string{"one", "two"}}
+	b := List{entries: []string{"two", "three"}}
+	got := a.Merge(b).entries
+	want := []string{"one", "two", "three"}
+	if len(got) != len(want) {
+		t.Fatalf("entries: got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("entries: got %v, want %v", got, want)
+		}
+	}
+}

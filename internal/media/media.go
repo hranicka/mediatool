@@ -85,6 +85,23 @@ func LangKept(tag string, whitelist []string) bool {
 	return false
 }
 
+// LangMatches reports whether a stream's language tag equals one of the
+// requested languages (full names and alias spellings accepted). Unlike
+// LangKept it does not treat missing/und tags as a match, so callers can
+// distinguish an explicit language tag from a fallback.
+func LangMatches(tag string, langs []string) bool {
+	tag = normalizeLang(tag)
+	if tag == "" || untagged[tag] {
+		return false
+	}
+	for _, l := range langs {
+		if tag == normalizeLang(l) {
+			return true
+		}
+	}
+	return false
+}
+
 // Commentary reports whether a track title marks it as a commentary track.
 func Commentary(title string) bool {
 	return commentaryRe.MatchString(title)

@@ -24,6 +24,7 @@ var commandFiles = map[string]string{
 	"clean":   ".mediatool-clean-ignore",
 	"ac3":     ".mediatool-ac3-ignore",
 	"enhance": ".mediatool-enhance-ignore",
+	"align":   ".mediatool-align-ignore",
 }
 
 // legacyCommandFiles are the retired pre-2.0 per-command names, kept for
@@ -111,3 +112,18 @@ func (l List) Match(path string) bool {
 
 // Len returns the number of entries.
 func (l List) Len() int { return len(l.entries) }
+
+// Merge returns a list carrying the entries of both lists (deduplicated);
+// batch commands reading two directory trees union their ignore chains.
+func (l List) Merge(other List) List {
+	seen := make(map[string]bool, len(l.entries)+len(other.entries))
+	out := List{entries: make([]string, 0, len(l.entries)+len(other.entries))}
+	for _, e := range append(append([]string{}, l.entries...), other.entries...) {
+		if seen[e] {
+			continue
+		}
+		seen[e] = true
+		out.entries = append(out.entries, e)
+	}
+	return out
+}

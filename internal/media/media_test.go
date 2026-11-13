@@ -88,3 +88,17 @@ func TestIsCoverArt(t *testing.T) {
 		}
 	}
 }
+
+func TestLangMatches(t *testing.T) {
+	wl := ExpandWhitelist([]string{"cs"})
+	for _, tag := range []string{"cs", "CES", "cze", "cz", "Czech", "czech"} {
+		if !LangMatches(tag, wl) {
+			t.Errorf("tag %q must match the Czech aliases", tag)
+		}
+	}
+	for _, tag := range []string{"", "und", "unknown", "en", "eng", "English", "ger"} {
+		if LangMatches(tag, wl) {
+			t.Errorf("tag %q must not match the Czech aliases", tag)
+		}
+	}
+}

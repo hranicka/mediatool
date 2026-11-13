@@ -194,3 +194,96 @@ func TestReplaceKeepsOriginalOnFailure(t *testing.T) {
 		t.Errorf("original must stay untouched when the rename fails: %v", err)
 	}
 }
+
+func TestSwapPair(t *testing.T) {
+	dir := t.TempDir()
+	ref := filepath.Join(dir, "ref.mkv")
+	dub := filepath.Join(dir, "dub.mkv")
+	newFile := filepath.Join(dir, "ref.mkv.tmp")
+	for p, s := range map[string]string{ref: "reference", dub: "dubbed", newFile: "aligned"} {
+		if err := os.WriteFile(p, []byte(s), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bak, err := SwapPair(ref, dub, newFile, ref)
+	if err != nil {
+		t.Fatalf("SwapPair: %v", err)
+	}
+	if bak != ref+".old" {
+		t.Errorf("backup path: got %s", bak)
+	}
+	if read(t, ref) != "aligned" {
+		t.Errorf("reference should hold the aligned file, got %q", read(t, ref))
+	}
+	if read(t, ref+".old") != "reference" || read(t, dub+".old") != "dubbed" {
+		t.Error("both originals must be preserved as .old")
+	}
+	if _, err := os.Stat(dub); err == nil {
+		t.Error("the dub name must be gone (renamed to .old)")
+	}
+}
+
+func TestSwapPairRefusesExistingDubBackup(t *testing.T) {
+	dir := t.TempDir()
+	ref := filepath.Join(dir, "ref.mkv")
+	dub := filepath.Join(dir, "dub.mkv")
+	newFile := filepath.Join(dir, "ref.mkv.tmp")
+	for p, s := range map[string]string{ref: "reference", dub: "dubbed", newFile: "aligned", dub + ".old": "precious"} {
+		if err := os.WriteFile(p, []byte(s), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := SwapPair(ref, dub, newFile, ref); err == nil {
+		t.Fatal("expected an error when the dub backup already exists")
+	}
+	if read(t, ref) != "reference" || read(t, dub) != "dubbed" {
+		t.Error("nothing must move when a backup exists")
+	}
+}
+
+func TestSwapPairRollsBack(t *testing.T) {
+	dir := t.TempDir()
+	ref := filepath.Join(dir, "ref.mkv")
+	dub := filepath.Join(dir, "dub.mkv")
+	for p, s := range map[string]string{ref: "reference", dub: "dubbed"} {
+		if err := os.WriteFile(p, []byte(s), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := SwapPair(ref, dub, filepath.Join(dir, "does-not-exist"), ref); err == nil {
+		t.Fatal("expected an error for a missing aligned file")
+	}
+	if read(t, ref) != "reference" || read(t, dub) != "dubbed" {
+		t.Error("both originals must be rolled back into place")
+	}
+	if _, err := os.Stat(ref + ".old"); err == nil {
+		t.Error("rollback must remove the reference backup")
+	}
+	if _, err := os.Stat(dub + ".old"); err == nil {
+		t.Error("rollback must remove the dub backup")
+	}
+}
+
+func TestReplacePair(t *testing.T) {
+	dir := t.TempDir()
+	ref := filepath.Join(dir, "ref.mp4")
+	dub := filepath.Join(dir, "dub.mkv")
+	dest := filepath.Join(dir, "ref.mkv")
+	newFile := filepath.Join(dir, "ref.tmp")
+	for p, s := range map[string]string{ref: "reference", dub: "dubbed", newFile: "aligned"} {
+		if err := os.WriteFile(p, []byte(s), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := ReplacePair(ref, dub, newFile, dest); err != nil {
+		t.Fatalf("ReplacePair: %v", err)
+	}
+	if read(t, dest) != "aligned" {
+		t.Errorf("dest should hold the aligned file, got %q", read(t, dest))
+	}
+	for _, p := range []string{ref, dub, ref + ".old", dub + ".old"} {
+		if _, err := os.Stat(p); err == nil {
+			t.Errorf("%s must not exist in -no-backup mode", p)
+		}
+	}
+}

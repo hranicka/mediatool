@@ -14,10 +14,11 @@ import (
 )
 
 type fakeFF struct {
-	probeFor  func(src string) (string, bool)
-	framesFor func(src string) []byte
-	rawFor    func(src string) []byte
-	streamLog [][]string
+	probeFor   func(src string) (string, bool)
+	framesFor  func(src string) []byte
+	rawFor     func(src string) []byte
+	streamLog  [][]string
+	frameCalls int
 }
 
 func (f *fakeFF) Output(name string, args ...string) ([]byte, error) {
@@ -33,6 +34,7 @@ func (f *fakeFF) Output(name string, args ...string) ([]byte, error) {
 	if name == "ffmpeg" {
 		for i := 0; i+1 < len(args); i++ {
 			if args[i] == "-i" && f.framesFor != nil {
+				f.frameCalls++
 				return f.framesFor(args[i+1]), nil
 			}
 		}
@@ -134,7 +136,7 @@ func TestAlignRunAll(t *testing.T) {
 	out := &bytes.Buffer{}
 	tl := newTestTool(t, dir, ff, &Config{Ref: ref, Dub: dub, Out: outPath, Interval: 0.2, MatchDist: 45, Bitrate: "192k", LangRef: "eng", LangDub: "ces"}, out)
 	defer tl.guard.Cleanup()
-	if err := tl.runAll(); err != nil {
+	if err := tl.runOne(); err != nil {
 		t.Fatalf("runAll: %v (out: %s)", err, out.String())
 	}
 
@@ -143,7 +145,7 @@ func TestAlignRunAll(t *testing.T) {
 		t.Errorf("missing timing map line: %s", got)
 	}
 	// the +2 s shift must show up at both ends of the map
-	if !strings.Contains(got, "dub 0s -> ref 2.0s; dub 18s -> ref 20.0s") {
+	if !strings.Contains(got, "dub 0.0s -> ref 2.0s; dub 18.0s -> ref 20.0s") {
 		t.Errorf("missing map endpoints: %s", got)
 	}
 	if !strings.Contains(got, "Created: "+outPath) {
@@ -157,16 +159,16 @@ func TestAlignRunAll(t *testing.T) {
 	args := ff.streamLog[1]
 	want := [][2]string{
 		{"-i", ref},
-		{"-map", "0:v:0"},
-		{"-map", "0:a:0"},
-		{"-map", "0:s:0"}, // the reference subtitle survives
-		{"-map", "1:a:0"},
-		{"-c:v", "copy"},
-		{"-c:a:0", "copy"},
+		{"-map", "0"},     // every reference stream survives
+		{"-map", "1:a:0"}, // the appended dub track
+		{"-c", "copy"},
 		{"-c:a:1", "aac"},
 		{"-b:a:1", "192k"},
-		{"-metadata:s:a:0", "language=eng"},
 		{"-metadata:s:a:1", "language=ces"},
+		{"-metadata:s:a:1", "title=Dubbed (resampled)"},
+		{"-disposition:a:1", "0"},
+		{"-map_metadata", "0"},
+		{"-f", "matroska"},
 	}
 	for _, pair := range want {
 		found := false
@@ -214,7 +216,7 @@ func TestAlignReferenceWithoutAudio(t *testing.T) {
 	out := &bytes.Buffer{}
 	tl := newTestTool(t, dir, ff, &Config{Ref: ref, Dub: dub, Out: filepath.Join(dir, "out.mkv")}, out)
 	defer tl.guard.Cleanup()
-	if err := tl.runAll(); err == nil {
+	if err := tl.runOne(); err == nil {
 		t.Fatal("expected an error for a reference without audio")
 	} else if !strings.Contains(err.Error(), "no audio track to copy") {
 		t.Errorf("unexpected error: %v", err)
@@ -237,7 +239,7 @@ func TestAlignMissingDuration(t *testing.T) {
 	out := &bytes.Buffer{}
 	tl := newTestTool(t, dir, ff, &Config{Ref: ref, Dub: dub, Out: filepath.Join(dir, "out.mkv")}, out)
 	defer tl.guard.Cleanup()
-	if err := tl.runAll(); err == nil {
+	if err := tl.runOne(); err == nil {
 		t.Fatal("expected an error for a missing reference duration")
 	} else if !strings.Contains(err.Error(), "cannot determine the reference duration") {
 		t.Errorf("unexpected error: %v", err)
@@ -251,7 +253,7 @@ func TestAlignDryRun(t *testing.T) {
 	out := &bytes.Buffer{}
 	tl := newTestTool(t, dir, ff, &Config{Ref: ref, Dub: dub, Out: outPath, Interval: 0.2, MatchDist: 45, Bitrate: "192k", LangRef: "eng", LangDub: "ces", DryRun: true}, out)
 	defer tl.guard.Cleanup()
-	if err := tl.runAll(); err != nil {
+	if err := tl.runOne(); err != nil {
 		t.Fatalf("runAll: %v", err)
 	}
 
@@ -282,7 +284,7 @@ func TestAlignDubWithoutAudio(t *testing.T) {
 	out := &bytes.Buffer{}
 	tl := newTestTool(t, dir, ff, &Config{Ref: ref, Dub: dub, Out: filepath.Join(dir, "out.mkv")}, out)
 	defer tl.guard.Cleanup()
-	if err := tl.runAll(); err == nil {
+	if err := tl.runOne(); err == nil {
 		t.Fatal("expected an error for a dub without audio")
 	} else if !strings.Contains(err.Error(), "no audio track") {
 		t.Errorf("unexpected error: %v", err)
@@ -306,7 +308,7 @@ func TestAlignTooFewMatches(t *testing.T) {
 	out := &bytes.Buffer{}
 	tl := newTestTool(t, dir, ff, &Config{Ref: ref, Dub: dub, Out: filepath.Join(dir, "out.mkv"), Interval: 0.2, MatchDist: 45}, out)
 	defer tl.guard.Cleanup()
-	if err := tl.runAll(); err == nil {
+	if err := tl.runOne(); err == nil {
 		t.Fatal("expected an error for unrelated content")
 	} else if !strings.Contains(err.Error(), "too few reliable matches") {
 		t.Errorf("unexpected error: %v", err)
